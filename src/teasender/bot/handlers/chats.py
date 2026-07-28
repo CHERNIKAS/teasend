@@ -8,6 +8,7 @@ as a power-user shortcut:
 """
 from __future__ import annotations
 
+import random
 from datetime import time
 
 from aiogram import F, Router
@@ -23,8 +24,9 @@ from teasender.bot.keyboards import (
     chats_list_kb,
     perm_label,
 )
-from teasender.core.enums import Permission
-from teasender.db.models import Chat, ChatTemplate, Template
+from teasender.core.enums import Permission, PublicationStatus
+from teasender.db.models import Chat, ChatTemplate, Publication, Template
+from teasender.db.models import utcnow
 
 router = Router(name="chats")
 
@@ -287,6 +289,36 @@ async def on_apply_all(cq: CallbackQuery, sessionmaker) -> None:
         await s.commit()
         n = len(targets)
     await cq.answer(f"Применено к {n} чатам", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("testnow:"))
+async def on_test_now(cq: CallbackQuery, sessionmaker) -> None:
+    chat_id = int(cq.data.split(":")[1])
+    async with sessionmaker() as s:
+        chat = await _get_chat(s, chat_id)
+        if chat is None:
+            await cq.answer("Чат не найден", show_alert=True)
+            return
+        if chat.permission not in _ELIGIBLE or not chat.is_enabled:
+            await cq.answer("Чат должен быть разрешён и включён", show_alert=True)
+            return
+        # Pick this chat's template (mix if several); fall back to first active.
+        assigned = [t for t in chat.templates if t.is_active]
+        if not assigned:
+            assigned = list((await s.scalars(
+                select(Template).where(Template.is_active.is_(True)).order_by(Template.id).limit(1)
+            )).all())
+        if not assigned:
+            await cq.answer("Нет активных шаблонов", show_alert=True)
+            return
+        s.add(Publication(
+            chat_id=chat_id,
+            template_id=random.choice(assigned).id,
+            scheduled_at=utcnow(),
+            status=PublicationStatus.planned,
+        ))
+        await s.commit()
+    await cq.answer("🚀 Поставлено в очередь — уйдёт в течение минуты", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("permpage:"))

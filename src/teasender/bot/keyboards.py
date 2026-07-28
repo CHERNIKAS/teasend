@@ -159,6 +159,7 @@ def chat_detail_kb(
                 InlineKeyboardButton(text="➕", callback_data=f"win:{cid}:e:1"),
             ],
             day_row,
+            [InlineKeyboardButton(text="🚀 Отправить сейчас (тест)", callback_data=f"testnow:{cid}")],
             [
                 InlineKeyboardButton(
                     text="📋 Применить ко всем разрешённым",
