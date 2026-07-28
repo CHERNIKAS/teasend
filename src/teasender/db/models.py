@@ -148,6 +148,20 @@ class TemplateCategory(Base):
     )
 
 
+class ChatTemplate(Base):
+    """Direct chat<->template assignment. One template = always that one; several
+    = the planner mixes them randomly across the chat's daily posts."""
+
+    __tablename__ = "chat_templates"
+
+    chat_id: Mapped[int] = mapped_column(
+        ForeignKey("chats.id", ondelete="CASCADE"), primary_key=True
+    )
+    template_id: Mapped[int] = mapped_column(
+        ForeignKey("templates.id", ondelete="CASCADE"), primary_key=True
+    )
+
+
 # --- Chats (with per-chat posting rules) ---------------------------------------
 
 class Chat(Base):
@@ -184,6 +198,8 @@ class Chat(Base):
     categories: Mapped[list[Category]] = relationship(
         secondary="chat_categories", back_populates="chats"
     )
+    # Templates assigned to this chat (see ChatTemplate).
+    templates: Mapped[list["Template"]] = relationship(secondary="chat_templates")
 
 
 # --- Publications (planned / sent posts) ---------------------------------------

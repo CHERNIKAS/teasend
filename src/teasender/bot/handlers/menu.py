@@ -4,14 +4,16 @@ from __future__ import annotations
 from zoneinfo import ZoneInfo
 
 from aiogram import F, Router
-from aiogram.filters import CommandStart
-from aiogram.types import CallbackQuery, Message
+from aiogram.filters import Command, CommandStart
+from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 from sqlalchemy import func, select
 
+from teasender.bot import ui
 from teasender.bot.handlers.chats import render_chats_message
 from teasender.bot.handlers.templates import render_templates_message
 from teasender.bot.keyboards import (
     BTN_CHATS,
+    BTN_HIDE,
     BTN_PAUSE,
     BTN_STATUS,
     BTN_SYNC,
@@ -32,10 +34,12 @@ _ELIGIBLE = (Permission.allowed, Permission.owner)
 
 
 @router.message(CommandStart())
+@router.message(Command("menu"))
 async def on_start(message: Message) -> None:
+    await ui.delete_safe(message.bot, message.chat.id, message.message_id)
     await message.answer(
         "🫖 <b>TeaSender</b> — панель управления.\n"
-        "Меню всегда под полем ввода. Выберите раздел.",
+        "Меню под полем ввода. Выберите раздел.",
         parse_mode="HTML",
         reply_markup=main_menu_reply(),
     )
@@ -73,18 +77,15 @@ async def _build_status(sessionmaker, settings: Settings) -> str:
         )
 
     state = acc.state if acc else None
-    icon = account_state_icon(state)
     state_txt = {
-        AccountState.active: "работает",
-        AccountState.paused: "на паузе",
-        AccountState.flood_paused: "флуд-пауза",
-    }.get(state, "—")
+        AccountState.active: "🟢 работает",
+        AccountState.paused: "⏸️ на паузе",
+        AccountState.flood_paused: "🌊 флуд-пауза",
+    }.get(state, "❔ —")
     mode = "🔴 БОЕВОЙ" if not settings.dry_run else "🧪 DRY-RUN (без отправки)"
 
     tz = ZoneInfo(settings.timezone)
-    next_txt = "—"
-    if next_dt is not None:
-        next_txt = as_utc(next_dt).astimezone(tz).strftime("%d.%m %H:%M")
+    next_txt = as_utc(next_dt).astimezone(tz).strftime("%d.%m %H:%M") if next_dt else "—"
 
     warn = ""
     if eligible_chats == 0:
@@ -95,7 +96,7 @@ async def _build_status(sessionmaker, settings: Settings) -> str:
     return (
         f"📊 <b>Статус</b>\n"
         f"Режим: {mode}\n"
-        f"Аккаунт: {icon} {state_txt}\n"
+        f"Аккаунт: {state_txt}\n"
         f"\n"
         f"✅ Разрешённых чатов: <b>{eligible_chats}</b> (включено всего: {enabled_chats})\n"
         f"📝 Активных шаблонов: <b>{active_tpl}</b>\n"
@@ -110,17 +111,16 @@ async def _build_status(sessionmaker, settings: Settings) -> str:
 
 @router.message(F.text == BTN_STATUS)
 async def on_status_msg(message: Message, sessionmaker, settings: Settings) -> None:
+    await ui.delete_safe(message.bot, message.chat.id, message.message_id)
     text = await _build_status(sessionmaker, settings)
-    await message.answer(text, parse_mode="HTML", reply_markup=status_kb())
+    await ui.show_panel(message.bot, message.chat.id, text, status_kb())
 
 
 @router.callback_query(F.data == "status")
 async def on_status_cb(cq: CallbackQuery, sessionmaker, settings: Settings) -> None:
+    ui.remember_panel(cq.message.chat.id, cq.message.message_id)
     text = await _build_status(sessionmaker, settings)
-    try:
-        await cq.message.edit_text(text, parse_mode="HTML", reply_markup=status_kb())
-    except Exception:
-        pass  # "message is not modified" when nothing changed
+    await ui.show_panel(cq.bot, cq.message.chat.id, text, status_kb())
     await cq.answer("Обновлено")
 
 
@@ -132,6 +132,12 @@ async def on_chats_msg(message: Message, sessionmaker) -> None:
 @router.message(F.text == BTN_TEMPLATES)
 async def on_templates_msg(message: Message, sessionmaker) -> None:
     await render_templates_message(message, sessionmaker)
+
+
+@router.message(F.text == BTN_HIDE)
+async def on_hide(message: Message) -> None:
+    await ui.delete_safe(message.bot, message.chat.id, message.message_id)
+    await message.answer("Меню скрыто. /menu — вернуть.", reply_markup=ReplyKeyboardRemove())
 
 
 @router.callback_query(F.data == "noop")
@@ -158,19 +164,11 @@ async def _toggle_pause(sessionmaker) -> str:
 
 
 @router.message(F.text == BTN_PAUSE)
-async def on_pause_msg(message: Message, sessionmaker) -> None:
-    await message.answer(await _toggle_pause(sessionmaker))
-
-
-@router.callback_query(F.data == "toggle_pause")
-async def on_toggle_pause(cq: CallbackQuery, sessionmaker, settings: Settings) -> None:
-    msg = await _toggle_pause(sessionmaker)
-    await cq.answer(msg, show_alert=True)
+async def on_pause_msg(message: Message, sessionmaker, settings: Settings) -> None:
+    await ui.delete_safe(message.bot, message.chat.id, message.message_id)
+    await _toggle_pause(sessionmaker)
     text = await _build_status(sessionmaker, settings)
-    try:
-        await cq.message.edit_text(text, parse_mode="HTML", reply_markup=status_kb())
-    except Exception:
-        pass
+    await ui.show_panel(message.bot, message.chat.id, text, status_kb())
 
 
 async def _do_sync(sessionmaker, settings: Settings, telegram) -> str:
@@ -180,23 +178,16 @@ async def _do_sync(sessionmaker, settings: Settings, telegram) -> str:
         dialogs = await chats_svc.read_dialogs(telegram)
         c_created, c_updated = await chats_svc.import_dialogs(s, dialogs)
     return (
-        f"🔄 Готово.\n"
+        f"🔄 <b>Синхронизация завершена</b>\n"
         f"Шаблоны: +{t_created}, обновлено {t_updated}\n"
         f"Чаты: +{c_created}, обновлено {c_updated}\n\n"
-        f"Новые чаты добавлены со статусом «не проверен» — отметьте разрешённые "
-        f"в разделе «Чаты» → «Не проверенные»."
+        f"Новые чаты — со статусом «не проверен». Отметьте разрешённые в «Чаты» → «Не проверенные»."
     )
 
 
 @router.message(F.text == BTN_SYNC)
 async def on_sync_msg(message: Message, sessionmaker, settings: Settings, telegram) -> None:
-    note = await message.answer("🔄 Синхронизация…")
+    await ui.delete_safe(message.bot, message.chat.id, message.message_id)
+    await ui.show_panel(message.bot, message.chat.id, "🔄 Синхронизация…")
     text = await _do_sync(sessionmaker, settings, telegram)
-    await note.edit_text(text)
-
-
-@router.callback_query(F.data == "sync")
-async def on_sync(cq: CallbackQuery, sessionmaker, settings: Settings, telegram) -> None:
-    await cq.answer("Синхронизация…")
-    text = await _do_sync(sessionmaker, settings, telegram)
-    await cq.message.edit_text(text)
+    await ui.show_panel(message.bot, message.chat.id, text)

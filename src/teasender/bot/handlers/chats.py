@@ -1,8 +1,8 @@
-"""Chat management: filtered list, permission, enable/disable, rule editing.
+"""Chat management: filtered list, permission, enable/disable, rule editing,
+per-chat template selection, and bulk apply.
 
-Posting rules are edited with buttons in the chat card (posts/day, interval,
-time window, weekdays). The old text command still works as a power-user
-shortcut:
+Posting rules are edited with buttons in the chat card. The old text command
+still works as a power-user shortcut:
 
     /rule <chat_id> ppd=2 interval=360 window=9-22 days=12345
 """
@@ -13,14 +13,18 @@ from datetime import time
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
+from teasender.bot import ui
 from teasender.bot.keyboards import (
     chat_detail_kb,
+    chat_templates_kb,
     chats_list_kb,
     perm_label,
 )
 from teasender.core.enums import Permission
-from teasender.db.models import Chat
+from teasender.db.models import Chat, ChatTemplate, Template
 
 router = Router(name="chats")
 
@@ -43,6 +47,12 @@ def _filter_clause(filt: str):
     return None  # "all"
 
 
+async def _get_chat(s: AsyncSession, chat_id: int) -> Chat | None:
+    return await s.scalar(
+        select(Chat).where(Chat.id == chat_id).options(selectinload(Chat.templates))
+    )
+
+
 async def _load_page(sessionmaker, filt: str, page: int) -> tuple[list[Chat], bool]:
     clause = _filter_clause(filt)
     async with sessionmaker() as s:
@@ -50,8 +60,7 @@ async def _load_page(sessionmaker, filt: str, page: int) -> tuple[list[Chat], bo
         if clause is not None:
             stmt = stmt.where(clause)
         rows = list((await s.scalars(stmt)).all())
-    has_next = len(rows) > PAGE
-    return rows[:PAGE], has_next
+    return rows[:PAGE], len(rows) > PAGE
 
 
 async def _list_text(sessionmaker, filt: str) -> str:
@@ -70,30 +79,24 @@ async def _list_text(sessionmaker, filt: str) -> str:
     return f"💬 <b>Чаты</b> · {label} ({total})"
 
 
-async def render_chats_message(message: Message, sessionmaker, filt: str, page: int) -> None:
+async def _render_list(bot, chat_id: int, sessionmaker, filt: str, page: int) -> None:
     chats, has_next = await _load_page(sessionmaker, filt, page)
     text = await _list_text(sessionmaker, filt)
-    await message.answer(
-        text,
-        parse_mode="HTML",
-        reply_markup=chats_list_kb(chats, filt, page, PAGE, has_next),
+    await ui.show_panel(
+        bot, chat_id, text, chats_list_kb(chats, filt, page, PAGE, has_next)
     )
+
+
+async def render_chats_message(message: Message, sessionmaker, filt: str, page: int) -> None:
+    await ui.delete_safe(message.bot, message.chat.id, message.message_id)
+    await _render_list(message.bot, message.chat.id, sessionmaker, filt, page)
 
 
 @router.callback_query(F.data.startswith("chats:"))
 async def on_chats(cq: CallbackQuery, sessionmaker) -> None:
     _, filt, page_s = cq.data.split(":")
-    page = int(page_s)
-    chats, has_next = await _load_page(sessionmaker, filt, page)
-    text = await _list_text(sessionmaker, filt)
-    try:
-        await cq.message.edit_text(
-            text,
-            parse_mode="HTML",
-            reply_markup=chats_list_kb(chats, filt, page, PAGE, has_next),
-        )
-    except Exception:
-        pass
+    ui.remember_panel(cq.message.chat.id, cq.message.message_id)
+    await _render_list(cq.bot, cq.message.chat.id, sessionmaker, filt, int(page_s))
     await cq.answer()
 
 
@@ -108,6 +111,13 @@ def _back_filt(chat: Chat) -> str:
 
 
 def _detail_text(chat: Chat) -> str:
+    tpls = [t for t in chat.templates if t.is_active]
+    if tpls:
+        tpl_line = "Шаблоны: " + ", ".join((t.preview_text or t.label or "?")[:20] for t in tpls[:3])
+        if len(tpls) > 3:
+            tpl_line += f" +{len(tpls) - 3}"
+    else:
+        tpl_line = "Шаблоны: по умолчанию (первый активный)"
     return (
         f"<b>{chat.title}</b>\n"
         f"ID: <code>{chat.tg_chat_id}</code>\n"
@@ -117,96 +127,97 @@ def _detail_text(chat: Chat) -> str:
         f"Мин. интервал: {chat.min_interval_minutes} мин\n"
         f"Окно: {chat.window_start:%H:%M}–{chat.window_end:%H:%M}\n"
         f"Дни: {_days_str(chat.days_mask)}\n"
+        f"{tpl_line}\n"
         f"Успешно/ошибок: {chat.success_count}/{chat.fail_count}"
     )
 
 
-async def _render_detail(cq: CallbackQuery, chat: Chat) -> None:
-    back = _back_filt(chat)
-    try:
-        await cq.message.edit_text(
-            _detail_text(chat),
-            parse_mode="HTML",
-            reply_markup=chat_detail_kb(chat, back_filt=back),
-        )
-    except Exception:
-        pass
+async def _render_detail(bot, chat_id: int, chat: Chat) -> None:
+    tpl_count = len([t for t in chat.templates if t.is_active])
+    await ui.show_panel(
+        bot, chat_id, _detail_text(chat),
+        chat_detail_kb(chat, tpl_count, back_filt=_back_filt(chat)),
+    )
 
 
 @router.callback_query(F.data.startswith("chat:"))
 async def on_chat_detail(cq: CallbackQuery, sessionmaker) -> None:
     chat_id = int(cq.data.split(":")[1])
+    ui.remember_panel(cq.message.chat.id, cq.message.message_id)
     async with sessionmaker() as s:
-        chat = await s.get(Chat, chat_id)
-    if chat is None:
-        await cq.answer("Чат не найден", show_alert=True)
-        return
-    await _render_detail(cq, chat)
+        chat = await _get_chat(s, chat_id)
+        if chat is None:
+            await cq.answer("Чат не найден", show_alert=True)
+            return
+        await _render_detail(cq.bot, cq.message.chat.id, chat)
     await cq.answer()
+
+
+async def _mutate_and_render(cq: CallbackQuery, sessionmaker, chat_id: int, fn) -> None:
+    ui.remember_panel(cq.message.chat.id, cq.message.message_id)
+    async with sessionmaker() as s:
+        chat = await _get_chat(s, chat_id)
+        if chat is None:
+            await cq.answer("Чат не найден", show_alert=True)
+            return
+        fn(chat)
+        await s.commit()
+        await s.refresh(chat)
+        await _render_detail(cq.bot, cq.message.chat.id, chat)
 
 
 @router.callback_query(F.data.startswith("perm:"))
 async def on_set_perm(cq: CallbackQuery, sessionmaker) -> None:
     _, chat_id, value = cq.data.split(":")
-    async with sessionmaker() as s:
-        chat = await s.get(Chat, int(chat_id))
-        chat.permission = Permission(value)
-        await s.commit()
-        await s.refresh(chat)
-        await _render_detail(cq, chat)
+    await _mutate_and_render(
+        cq, sessionmaker, int(chat_id),
+        lambda c: setattr(c, "permission", Permission(value)),
+    )
     await cq.answer(f"Статус: {value}")
 
 
 @router.callback_query(F.data.startswith("enable:"))
 async def on_toggle_enable(cq: CallbackQuery, sessionmaker) -> None:
     chat_id = int(cq.data.split(":")[1])
-    async with sessionmaker() as s:
-        chat = await s.get(Chat, chat_id)
-        chat.is_enabled = not chat.is_enabled
-        await s.commit()
-        await s.refresh(chat)
-        await _render_detail(cq, chat)
+    await _mutate_and_render(
+        cq, sessionmaker, chat_id, lambda c: setattr(c, "is_enabled", not c.is_enabled)
+    )
     await cq.answer("Готово")
 
 
 @router.callback_query(F.data.startswith("ppd:"))
 async def on_ppd(cq: CallbackQuery, sessionmaker) -> None:
     _, chat_id, delta = cq.data.split(":")
-    async with sessionmaker() as s:
-        chat = await s.get(Chat, int(chat_id))
-        chat.posts_per_day = max(0, min(50, chat.posts_per_day + int(delta)))
-        await s.commit()
-        await s.refresh(chat)
-        await _render_detail(cq, chat)
+    await _mutate_and_render(
+        cq, sessionmaker, int(chat_id),
+        lambda c: setattr(c, "posts_per_day", max(0, min(50, c.posts_per_day + int(delta)))),
+    )
     await cq.answer()
 
 
 @router.callback_query(F.data.startswith("intv:"))
 async def on_interval(cq: CallbackQuery, sessionmaker) -> None:
     _, chat_id, delta = cq.data.split(":")
-    async with sessionmaker() as s:
-        chat = await s.get(Chat, int(chat_id))
-        chat.min_interval_minutes = max(0, min(1440, chat.min_interval_minutes + int(delta)))
-        await s.commit()
-        await s.refresh(chat)
-        await _render_detail(cq, chat)
+    await _mutate_and_render(
+        cq, sessionmaker, int(chat_id),
+        lambda c: setattr(
+            c, "min_interval_minutes", max(0, min(1440, c.min_interval_minutes + int(delta)))
+        ),
+    )
     await cq.answer()
 
 
 @router.callback_query(F.data.startswith("win:"))
 async def on_window(cq: CallbackQuery, sessionmaker) -> None:
     _, chat_id, which, delta = cq.data.split(":")
-    async with sessionmaker() as s:
-        chat = await s.get(Chat, int(chat_id))
+
+    def _apply(c: Chat) -> None:
         if which == "s":
-            h = (chat.window_start.hour + int(delta)) % 24
-            chat.window_start = time(h, 0)
+            c.window_start = time((c.window_start.hour + int(delta)) % 24, 0)
         else:
-            h = (chat.window_end.hour + int(delta)) % 24
-            chat.window_end = time(h, 0)
-        await s.commit()
-        await s.refresh(chat)
-        await _render_detail(cq, chat)
+            c.window_end = time((c.window_end.hour + int(delta)) % 24, 0)
+
+    await _mutate_and_render(cq, sessionmaker, int(chat_id), _apply)
     await cq.answer()
 
 
@@ -214,19 +225,97 @@ async def on_window(cq: CallbackQuery, sessionmaker) -> None:
 async def on_day(cq: CallbackQuery, sessionmaker) -> None:
     _, chat_id, idx = cq.data.split(":")
     bit = 1 << int(idx)
-    async with sessionmaker() as s:
-        chat = await s.get(Chat, int(chat_id))
-        chat.days_mask ^= bit
-        await s.commit()
-        await s.refresh(chat)
-        await _render_detail(cq, chat)
+    await _mutate_and_render(
+        cq, sessionmaker, int(chat_id), lambda c: setattr(c, "days_mask", c.days_mask ^ bit)
+    )
     await cq.answer()
+
+
+# --- Per-chat template selection ----------------------------------------------
+
+@router.callback_query(F.data.startswith("ctpl:"))
+async def on_chat_templates(cq: CallbackQuery, sessionmaker) -> None:
+    chat_id = int(cq.data.split(":")[1])
+    ui.remember_panel(cq.message.chat.id, cq.message.message_id)
+    async with sessionmaker() as s:
+        chat = await _get_chat(s, chat_id)
+        if chat is None:
+            await cq.answer("Чат не найден", show_alert=True)
+            return
+        templates = list((await s.scalars(
+            select(Template).where(Template.is_active.is_(True)).order_by(Template.id)
+        )).all())
+        assigned = {t.id for t in chat.templates}
+    if not templates:
+        await cq.answer("Нет активных шаблонов", show_alert=True)
+        return
+    text = (
+        f"🧩 <b>Шаблоны для «{chat.title}»</b>\n"
+        f"Отмечено — участвуют. Если не отмечено ничего, идёт первый активный. "
+        f"Отметишь 2+ — бот будет их миксить."
+    )
+    await ui.show_panel(cq.bot, cq.message.chat.id, text, chat_templates_kb(chat_id, templates, assigned))
+    await cq.answer()
+
+
+@router.callback_query(F.data.startswith("ctpltgl:"))
+async def on_chat_template_toggle(cq: CallbackQuery, sessionmaker) -> None:
+    _, chat_id_s, tpl_id_s = cq.data.split(":")
+    chat_id, tpl_id = int(chat_id_s), int(tpl_id_s)
+    ui.remember_panel(cq.message.chat.id, cq.message.message_id)
+    async with sessionmaker() as s:
+        link = await s.get(ChatTemplate, {"chat_id": chat_id, "template_id": tpl_id})
+        if link is None:
+            s.add(ChatTemplate(chat_id=chat_id, template_id=tpl_id))
+        else:
+            await s.delete(link)
+        await s.commit()
+        chat = await _get_chat(s, chat_id)
+        templates = list((await s.scalars(
+            select(Template).where(Template.is_active.is_(True)).order_by(Template.id)
+        )).all())
+        assigned = {t.id for t in chat.templates}
+    await ui.show_panel(
+        cq.bot, cq.message.chat.id,
+        f"🧩 <b>Шаблоны для «{chat.title}»</b>\nОтмеченные участвуют; 2+ — миксятся.",
+        chat_templates_kb(chat_id, templates, assigned),
+    )
+    await cq.answer()
+
+
+# --- Bulk apply ---------------------------------------------------------------
+
+@router.callback_query(F.data.startswith("applyall:"))
+async def on_apply_all(cq: CallbackQuery, sessionmaker) -> None:
+    src_id = int(cq.data.split(":")[1])
+    async with sessionmaker() as s:
+        src = await _get_chat(s, src_id)
+        if src is None:
+            await cq.answer("Чат не найден", show_alert=True)
+            return
+        src_tpl_ids = [t.id for t in src.templates]
+        targets = list((await s.scalars(
+            select(Chat).where(Chat.permission.in_(_ELIGIBLE), Chat.id != src_id)
+        )).all())
+        for c in targets:
+            c.posts_per_day = src.posts_per_day
+            c.min_interval_minutes = src.min_interval_minutes
+            c.window_start = src.window_start
+            c.window_end = src.window_end
+            c.days_mask = src.days_mask
+            await s.execute(ChatTemplate.__table__.delete().where(ChatTemplate.chat_id == c.id))
+            for tid in src_tpl_ids:
+                s.add(ChatTemplate(chat_id=c.id, template_id=tid))
+        await s.commit()
+        n = len(targets)
+    await cq.answer(f"Применено к {n} чатам", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("permpage:"))
 async def on_perm_page(cq: CallbackQuery, sessionmaker) -> None:
     _, filt, page_s = cq.data.split(":")
     page = int(page_s)
+    ui.remember_panel(cq.message.chat.id, cq.message.message_id)
     chats, _ = await _load_page(sessionmaker, filt, page)
     async with sessionmaker() as s:
         n = 0
@@ -237,16 +326,7 @@ async def on_perm_page(cq: CallbackQuery, sessionmaker) -> None:
                 n += 1
         await s.commit()
     await cq.answer(f"Разрешено: {n}", show_alert=True)
-    # Re-render the same filtered page (now emptier).
-    chats, has_next = await _load_page(sessionmaker, filt, page)
-    text = await _list_text(sessionmaker, filt)
-    try:
-        await cq.message.edit_text(
-            text, parse_mode="HTML",
-            reply_markup=chats_list_kb(chats, filt, page, PAGE, has_next),
-        )
-    except Exception:
-        pass
+    await _render_list(cq.bot, cq.message.chat.id, sessionmaker, filt, page)
 
 
 @router.message(F.text.startswith("/rule"))

@@ -46,6 +46,13 @@ class TelegramService:
         await self._client.connect()
         if not await self._client.is_user_authorized():
             raise NotAuthorized("session not authorized; run python -m teasender.tools.login")
+        # Warm the entity cache: a StringSession doesn't persist access hashes
+        # across processes, so resolving a chat by its bare id later would raise
+        # ValueError. Loading dialogs once populates the cache for all of them.
+        try:
+            await self._client.get_dialogs()
+        except Exception:  # noqa: BLE001 - non-fatal cache warm-up
+            pass
 
     async def close(self) -> None:
         await self._client.disconnect()

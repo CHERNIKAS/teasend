@@ -10,6 +10,7 @@ duplicating what is already planned or sent.
 """
 from __future__ import annotations
 
+import random
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -38,15 +39,13 @@ def _combine_utc(day: date, t: time, tz: ZoneInfo) -> datetime:
     return datetime.combine(day, t, tzinfo=tz).astimezone(timezone.utc)
 
 
-def _eligible_templates(chat: Chat, templates: list[Template]) -> list[Template]:
-    chat_cat_ids = {c.id for c in chat.categories}
-    out: list[Template] = []
-    for t in templates:
-        t_cat_ids = {c.id for c in t.categories}
-        # A template with no categories is global; otherwise it must overlap.
-        if not t_cat_ids or (t_cat_ids & chat_cat_ids):
-            out.append(t)
-    return out
+def _chat_templates(chat: Chat, active_templates: list[Template]) -> list[Template]:
+    """Templates this chat should post. Its own assigned+active ones; if it has
+    none assigned yet, fall back to the first active template globally."""
+    assigned = [t for t in chat.templates if t.is_active]
+    if assigned:
+        return assigned
+    return active_templates[:1]
 
 
 async def plan_day(session: AsyncSession, tz_name: str, now: datetime | None = None) -> int:
@@ -55,16 +54,16 @@ async def plan_day(session: AsyncSession, tz_name: str, now: datetime | None = N
     today = now_local.date()
     weekday = now_local.weekday()  # Mon=0
 
-    templates = list(
+    active_templates = list(
         (
             await session.scalars(
                 select(Template)
                 .where(Template.is_active.is_(True))
-                .options(selectinload(Template.categories))
+                .order_by(Template.id)
             )
         ).all()
     )
-    if not templates:
+    if not active_templates:
         return 0
 
     chats = list(
@@ -72,7 +71,7 @@ async def plan_day(session: AsyncSession, tz_name: str, now: datetime | None = N
             await session.scalars(
                 select(Chat)
                 .where(Chat.is_enabled.is_(True), Chat.permission.in_(_ELIGIBLE))
-                .options(selectinload(Chat.categories))
+                .options(selectinload(Chat.templates))
             )
         ).all()
     )
@@ -84,7 +83,7 @@ async def plan_day(session: AsyncSession, tz_name: str, now: datetime | None = N
         if not (chat.days_mask & (1 << weekday)):
             continue
 
-        eligible = _eligible_templates(chat, templates)
+        eligible = _chat_templates(chat, active_templates)
         if not eligible:
             continue
 
@@ -105,8 +104,9 @@ async def plan_day(session: AsyncSession, tz_name: str, now: datetime | None = N
             continue
 
         slots = _slot_times(chat, today, tz, now_local, remaining)
-        for i, slot_utc in enumerate(slots):
-            template = eligible[(already + i) % len(eligible)]
+        for slot_utc in slots:
+            # One assigned template -> always it; several -> mix randomly.
+            template = random.choice(eligible)
             session.add(
                 Publication(
                     chat_id=chat.id,
@@ -124,32 +124,41 @@ async def plan_day(session: AsyncSession, tz_name: str, now: datetime | None = N
 def _slot_times(
     chat: Chat, day: date, tz: ZoneInfo, now_local: datetime, count: int
 ) -> list[datetime]:
-    """Evenly spaced UTC slot times within the chat's window, honouring the
-    minimum interval and never before now or the last-send + interval."""
-    interval = timedelta(minutes=chat.min_interval_minutes)
+    """Random UTC slot times within the chat's window, honouring the minimum
+    interval and never before now or the last-send + interval.
+
+    The window is split into `actual` equal segments and one random moment is
+    picked inside each, then nudged forward to respect the minimum gap. This
+    keeps posts spread across the day while giving each chat its own unpredictable
+    times (and fresh times every day the planner runs)."""
+    interval_s = chat.min_interval_minutes * 60
     window_start = _combine_utc(day, chat.window_start, tz)
     window_end = _combine_utc(day, chat.window_end, tz)
     now_utc = now_local.astimezone(timezone.utc)
 
     earliest = max(window_start, now_utc)
     if chat.last_sent_at is not None:
-        earliest = max(earliest, as_utc(chat.last_sent_at) + interval)
+        earliest = max(earliest, as_utc(chat.last_sent_at) + timedelta(seconds=interval_s))
     if earliest > window_end:
         return []
 
     span = (window_end - earliest).total_seconds()
-    max_fit = int(span // interval.total_seconds()) + 1
+    max_fit = int(span // interval_s) + 1 if interval_s > 0 else count
     actual = min(count, max_fit)
     if actual <= 0:
         return []
-    if actual == 1:
-        return [earliest]
 
-    gap = max(interval.total_seconds(), span / (actual - 1))
-    slots = []
+    seg = span / actual
+    slots: list[datetime] = []
+    prev: float | None = None
     for i in range(actual):
-        t = earliest + timedelta(seconds=gap * i)
-        if t > window_end:
+        lo = i * seg
+        hi = (i + 1) * seg
+        offset = random.uniform(lo, hi)
+        if prev is not None and offset - prev < interval_s:
+            offset = prev + interval_s
+        if offset > span:
             break
-        slots.append(t)
+        prev = offset
+        slots.append(earliest + timedelta(seconds=offset))
     return slots
