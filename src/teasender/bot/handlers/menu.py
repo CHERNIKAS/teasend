@@ -1,36 +1,47 @@
 """Start menu, status, account pause/resume, and drafts/chats sync."""
 from __future__ import annotations
 
+from zoneinfo import ZoneInfo
+
 from aiogram import F, Router
 from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import func, select
 
-from teasender.bot.keyboards import main_menu
+from teasender.bot.handlers.chats import render_chats_message
+from teasender.bot.handlers.templates import render_templates_message
+from teasender.bot.keyboards import (
+    BTN_CHATS,
+    BTN_PAUSE,
+    BTN_STATUS,
+    BTN_SYNC,
+    BTN_TEMPLATES,
+    account_state_icon,
+    main_menu_reply,
+    status_kb,
+)
 from teasender.config import Settings
-from teasender.core.enums import AccountState, PublicationStatus
-from teasender.db.models import Account, Chat, Publication
+from teasender.core.enums import AccountState, Permission, PublicationStatus
+from teasender.db.models import Account, Chat, Publication, Template, as_utc
 from teasender.services import chats as chats_svc
 from teasender.services import templates as tpl_svc
 
 router = Router(name="menu")
 
+_ELIGIBLE = (Permission.allowed, Permission.owner)
+
 
 @router.message(CommandStart())
 async def on_start(message: Message) -> None:
     await message.answer(
-        "TeaSender — панель управления.\nВыберите раздел:", reply_markup=main_menu()
+        "🫖 <b>TeaSender</b> — панель управления.\n"
+        "Меню всегда под полем ввода. Выберите раздел.",
+        parse_mode="HTML",
+        reply_markup=main_menu_reply(),
     )
 
 
-@router.callback_query(F.data == "menu")
-async def on_menu(cq: CallbackQuery) -> None:
-    await cq.message.edit_text("Меню:", reply_markup=main_menu())
-    await cq.answer()
-
-
-@router.callback_query(F.data == "status")
-async def on_status(cq: CallbackQuery, sessionmaker) -> None:
+async def _build_status(sessionmaker, settings: Settings) -> str:
     async with sessionmaker() as s:
         acc = await s.scalar(select(Account).limit(1))
         planned = await s.scalar(
@@ -45,27 +56,94 @@ async def on_status(cq: CallbackQuery, sessionmaker) -> None:
             select(func.count()).select_from(Publication)
             .where(Publication.status == PublicationStatus.failed)
         )
-        allowed_chats = await s.scalar(
+        eligible_chats = await s.scalar(
             select(func.count()).select_from(Chat)
-            .where(Chat.is_enabled.is_(True))
+            .where(Chat.is_enabled.is_(True), Chat.permission.in_(_ELIGIBLE))
         )
-    state = acc.state.value if acc else "—"
-    text = (
+        enabled_chats = await s.scalar(
+            select(func.count()).select_from(Chat).where(Chat.is_enabled.is_(True))
+        )
+        active_tpl = await s.scalar(
+            select(func.count()).select_from(Template)
+            .where(Template.is_active.is_(True))
+        )
+        next_dt = await s.scalar(
+            select(func.min(Publication.scheduled_at))
+            .where(Publication.status == PublicationStatus.planned)
+        )
+
+    state = acc.state if acc else None
+    icon = account_state_icon(state)
+    state_txt = {
+        AccountState.active: "работает",
+        AccountState.paused: "на паузе",
+        AccountState.flood_paused: "флуд-пауза",
+    }.get(state, "—")
+    mode = "🔴 БОЕВОЙ" if not settings.dry_run else "🧪 DRY-RUN (без отправки)"
+
+    tz = ZoneInfo(settings.timezone)
+    next_txt = "—"
+    if next_dt is not None:
+        next_txt = as_utc(next_dt).astimezone(tz).strftime("%d.%m %H:%M")
+
+    warn = ""
+    if eligible_chats == 0:
+        warn = "\n\n⚠️ <b>Нет разрешённых чатов</b> — рассылка не пойдёт. Откройте «Чаты» → «Не проверенные» и отметьте нужные ✅."
+    elif active_tpl == 0:
+        warn = "\n\n⚠️ <b>Нет активных шаблонов</b> — нечего рассылать. Добавьте посты в канал-черновик и нажмите «Синхронизация»."
+
+    return (
         f"📊 <b>Статус</b>\n"
-        f"Аккаунт: {state}\n"
-        f"Запланировано: {planned}\n"
-        f"Отправлено: {sent}\n"
-        f"Ошибок: {failed}\n"
-        f"Активных чатов: {allowed_chats}"
+        f"Режим: {mode}\n"
+        f"Аккаунт: {icon} {state_txt}\n"
+        f"\n"
+        f"✅ Разрешённых чатов: <b>{eligible_chats}</b> (включено всего: {enabled_chats})\n"
+        f"📝 Активных шаблонов: <b>{active_tpl}</b>\n"
+        f"\n"
+        f"🗓 Запланировано: {planned}\n"
+        f"➡️ Ближайшая отправка: {next_txt}\n"
+        f"✔️ Отправлено: {sent}\n"
+        f"❌ Ошибок: {failed}"
+        f"{warn}"
     )
-    await cq.message.edit_text(text, parse_mode="HTML", reply_markup=main_menu())
+
+
+@router.message(F.text == BTN_STATUS)
+async def on_status_msg(message: Message, sessionmaker, settings: Settings) -> None:
+    text = await _build_status(sessionmaker, settings)
+    await message.answer(text, parse_mode="HTML", reply_markup=status_kb())
+
+
+@router.callback_query(F.data == "status")
+async def on_status_cb(cq: CallbackQuery, sessionmaker, settings: Settings) -> None:
+    text = await _build_status(sessionmaker, settings)
+    try:
+        await cq.message.edit_text(text, parse_mode="HTML", reply_markup=status_kb())
+    except Exception:
+        pass  # "message is not modified" when nothing changed
+    await cq.answer("Обновлено")
+
+
+@router.message(F.text == BTN_CHATS)
+async def on_chats_msg(message: Message, sessionmaker) -> None:
+    await render_chats_message(message, sessionmaker, filt="allowed", page=0)
+
+
+@router.message(F.text == BTN_TEMPLATES)
+async def on_templates_msg(message: Message, sessionmaker) -> None:
+    await render_templates_message(message, sessionmaker)
+
+
+@router.callback_query(F.data == "noop")
+async def on_noop(cq: CallbackQuery) -> None:
     await cq.answer()
 
 
-@router.callback_query(F.data == "toggle_pause")
-async def on_toggle_pause(cq: CallbackQuery, sessionmaker) -> None:
+async def _toggle_pause(sessionmaker) -> str:
     async with sessionmaker() as s:
         acc = await s.scalar(select(Account).limit(1))
+        if acc is None:
+            return "Аккаунт не инициализирован."
         if acc.state == AccountState.active:
             acc.state = AccountState.paused
             acc.pause_reason = "manual"
@@ -76,22 +154,49 @@ async def on_toggle_pause(cq: CallbackQuery, sessionmaker) -> None:
             acc.flood_until = None
             msg = "▶️ Возобновлено."
         await s.commit()
+    return msg
+
+
+@router.message(F.text == BTN_PAUSE)
+async def on_pause_msg(message: Message, sessionmaker) -> None:
+    await message.answer(await _toggle_pause(sessionmaker))
+
+
+@router.callback_query(F.data == "toggle_pause")
+async def on_toggle_pause(cq: CallbackQuery, sessionmaker, settings: Settings) -> None:
+    msg = await _toggle_pause(sessionmaker)
     await cq.answer(msg, show_alert=True)
+    text = await _build_status(sessionmaker, settings)
+    try:
+        await cq.message.edit_text(text, parse_mode="HTML", reply_markup=status_kb())
+    except Exception:
+        pass
 
 
-@router.callback_query(F.data == "sync")
-async def on_sync(cq: CallbackQuery, sessionmaker, settings: Settings, telegram) -> None:
-    await cq.answer("Синхронизация…")
+async def _do_sync(sessionmaker, settings: Settings, telegram) -> str:
     async with sessionmaker() as s:
         drafts = await telegram.read_drafts(settings.drafts_channel)
         t_created, t_updated = await tpl_svc.sync_templates(s, drafts)
         dialogs = await chats_svc.read_dialogs(telegram)
         c_created, c_updated = await chats_svc.import_dialogs(s, dialogs)
-    await cq.message.edit_text(
+    return (
         f"🔄 Готово.\n"
         f"Шаблоны: +{t_created}, обновлено {t_updated}\n"
         f"Чаты: +{c_created}, обновлено {c_updated}\n\n"
         f"Новые чаты добавлены со статусом «не проверен» — отметьте разрешённые "
-        f"в разделе «Чаты».",
-        reply_markup=main_menu(),
+        f"в разделе «Чаты» → «Не проверенные»."
     )
+
+
+@router.message(F.text == BTN_SYNC)
+async def on_sync_msg(message: Message, sessionmaker, settings: Settings, telegram) -> None:
+    note = await message.answer("🔄 Синхронизация…")
+    text = await _do_sync(sessionmaker, settings, telegram)
+    await note.edit_text(text)
+
+
+@router.callback_query(F.data == "sync")
+async def on_sync(cq: CallbackQuery, sessionmaker, settings: Settings, telegram) -> None:
+    await cq.answer("Синхронизация…")
+    text = await _do_sync(sessionmaker, settings, telegram)
+    await cq.message.edit_text(text)
