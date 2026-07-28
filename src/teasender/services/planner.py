@@ -124,41 +124,25 @@ async def plan_day(session: AsyncSession, tz_name: str, now: datetime | None = N
 def _slot_times(
     chat: Chat, day: date, tz: ZoneInfo, now_local: datetime, count: int
 ) -> list[datetime]:
-    """Random UTC slot times within the chat's window, honouring the minimum
-    interval and never before now or the last-send + interval.
+    """`count` random UTC times spread across the chat's window today.
 
-    The window is split into `actual` equal segments and one random moment is
-    picked inside each, then nudged forward to respect the minimum gap. This
-    keeps posts spread across the day while giving each chat its own unpredictable
-    times (and fresh times every day the planner runs)."""
-    interval_s = chat.min_interval_minutes * 60
+    The remaining window is split into `count` equal segments and one random
+    moment is picked inside each. That gives exactly the requested number of
+    posts, spaced across the day, with each chat getting its own unpredictable
+    times — reshuffled every day the planner runs. No fixed minimum interval:
+    the segmenting keeps posts apart, and the account-wide send throttle
+    (`global_min_send_interval`) prevents bursts."""
     window_start = _combine_utc(day, chat.window_start, tz)
     window_end = _combine_utc(day, chat.window_end, tz)
     now_utc = now_local.astimezone(timezone.utc)
 
     earliest = max(window_start, now_utc)
-    if chat.last_sent_at is not None:
-        earliest = max(earliest, as_utc(chat.last_sent_at) + timedelta(seconds=interval_s))
-    if earliest > window_end:
+    if earliest >= window_end or count <= 0:
         return []
 
     span = (window_end - earliest).total_seconds()
-    max_fit = int(span // interval_s) + 1 if interval_s > 0 else count
-    actual = min(count, max_fit)
-    if actual <= 0:
-        return []
-
-    seg = span / actual
-    slots: list[datetime] = []
-    prev: float | None = None
-    for i in range(actual):
-        lo = i * seg
-        hi = (i + 1) * seg
-        offset = random.uniform(lo, hi)
-        if prev is not None and offset - prev < interval_s:
-            offset = prev + interval_s
-        if offset > span:
-            break
-        prev = offset
-        slots.append(earliest + timedelta(seconds=offset))
-    return slots
+    seg = span / count
+    return [
+        earliest + timedelta(seconds=random.uniform(i * seg, (i + 1) * seg))
+        for i in range(count)
+    ]

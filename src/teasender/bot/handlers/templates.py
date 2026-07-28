@@ -30,41 +30,33 @@ async def _load(sessionmaker) -> list[Template]:
         return list((await s.scalars(select(Template).order_by(Template.id))).all())
 
 
-async def _render(bot, chat_id: int, sessionmaker) -> None:
-    rows = await _load(sessionmaker)
+def _payload(rows: list[Template]):
     if not rows:
-        await ui.show_panel(
-            bot, chat_id,
-            "Шаблонов нет. Напишите объявления в канал-черновик и нажмите «Синхронизация».",
-        )
-        return
-    await ui.show_panel(
-        bot, chat_id,
-        "📝 <b>Шаблоны</b> (🟢 активные участвуют в рассылке):",
-        _templates_kb(rows),
-    )
+        return "Шаблонов нет. Напишите объявления в канал-черновик и нажмите «Синхронизация».", None
+    return "📝 <b>Шаблоны</b> (🟢 активные участвуют в рассылке):", _templates_kb(rows)
 
 
 async def render_templates_message(message: Message, sessionmaker) -> None:
     await ui.delete_safe(message.bot, message.chat.id, message.message_id)
-    await _render(message.bot, message.chat.id, sessionmaker)
+    text, kb = _payload(await _load(sessionmaker))
+    await ui.open_panel(message.bot, message.chat.id, text, kb)
 
 
 @router.callback_query(F.data == "templates")
 async def on_templates(cq: CallbackQuery, sessionmaker) -> None:
-    ui.remember_panel(cq.message.chat.id, cq.message.message_id)
-    await _render(cq.bot, cq.message.chat.id, sessionmaker)
+    text, kb = _payload(await _load(sessionmaker))
+    await ui.edit_panel(cq.message, text, kb)
     await cq.answer()
 
 
 @router.callback_query(F.data.startswith("tpl:"))
 async def on_toggle_template(cq: CallbackQuery, sessionmaker) -> None:
     tpl_id = int(cq.data.split(":")[1])
-    ui.remember_panel(cq.message.chat.id, cq.message.message_id)
     async with sessionmaker() as s:
         tpl = await s.get(Template, tpl_id)
         tpl.is_active = not tpl.is_active
         await s.commit()
         active = tpl.is_active
+    text, kb = _payload(await _load(sessionmaker))
+    await ui.edit_panel(cq.message, text, kb)
     await cq.answer("Активен" if active else "Отключён")
-    await _render(cq.bot, cq.message.chat.id, sessionmaker)

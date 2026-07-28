@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
-from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy import func, select
 
 from teasender.bot import ui
@@ -13,12 +13,10 @@ from teasender.bot.handlers.chats import render_chats_message
 from teasender.bot.handlers.templates import render_templates_message
 from teasender.bot.keyboards import (
     BTN_CHATS,
-    BTN_HIDE,
     BTN_PAUSE,
     BTN_STATUS,
     BTN_SYNC,
     BTN_TEMPLATES,
-    account_state_icon,
     main_menu_reply,
     status_kb,
 )
@@ -113,14 +111,13 @@ async def _build_status(sessionmaker, settings: Settings) -> str:
 async def on_status_msg(message: Message, sessionmaker, settings: Settings) -> None:
     await ui.delete_safe(message.bot, message.chat.id, message.message_id)
     text = await _build_status(sessionmaker, settings)
-    await ui.show_panel(message.bot, message.chat.id, text, status_kb())
+    await ui.open_panel(message.bot, message.chat.id, text, status_kb())
 
 
 @router.callback_query(F.data == "status")
 async def on_status_cb(cq: CallbackQuery, sessionmaker, settings: Settings) -> None:
-    ui.remember_panel(cq.message.chat.id, cq.message.message_id)
     text = await _build_status(sessionmaker, settings)
-    await ui.show_panel(cq.bot, cq.message.chat.id, text, status_kb())
+    await ui.edit_panel(cq.message, text, status_kb())
     await cq.answer("Обновлено")
 
 
@@ -132,12 +129,6 @@ async def on_chats_msg(message: Message, sessionmaker) -> None:
 @router.message(F.text == BTN_TEMPLATES)
 async def on_templates_msg(message: Message, sessionmaker) -> None:
     await render_templates_message(message, sessionmaker)
-
-
-@router.message(F.text == BTN_HIDE)
-async def on_hide(message: Message) -> None:
-    await ui.delete_safe(message.bot, message.chat.id, message.message_id)
-    await message.answer("Меню скрыто. /menu — вернуть.", reply_markup=ReplyKeyboardRemove())
 
 
 @router.callback_query(F.data == "noop")
@@ -168,7 +159,7 @@ async def on_pause_msg(message: Message, sessionmaker, settings: Settings) -> No
     await ui.delete_safe(message.bot, message.chat.id, message.message_id)
     await _toggle_pause(sessionmaker)
     text = await _build_status(sessionmaker, settings)
-    await ui.show_panel(message.bot, message.chat.id, text, status_kb())
+    await ui.open_panel(message.bot, message.chat.id, text, status_kb())
 
 
 async def _do_sync(sessionmaker, settings: Settings, telegram) -> str:
@@ -188,6 +179,6 @@ async def _do_sync(sessionmaker, settings: Settings, telegram) -> str:
 @router.message(F.text == BTN_SYNC)
 async def on_sync_msg(message: Message, sessionmaker, settings: Settings, telegram) -> None:
     await ui.delete_safe(message.bot, message.chat.id, message.message_id)
-    await ui.show_panel(message.bot, message.chat.id, "🔄 Синхронизация…")
+    await ui.open_panel(message.bot, message.chat.id, "🔄 Синхронизация…")
     text = await _do_sync(sessionmaker, settings, telegram)
-    await ui.show_panel(message.bot, message.chat.id, text)
+    await ui.set_panel(message.bot, message.chat.id, text)

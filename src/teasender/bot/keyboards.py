@@ -17,7 +17,6 @@ BTN_CHATS = "💬 Чаты"
 BTN_TEMPLATES = "📝 Шаблоны"
 BTN_SYNC = "🔄 Синхронизация"
 BTN_PAUSE = "⏯ Пауза / Пуск"
-BTN_HIDE = "⌨️ Скрыть меню"
 
 
 def main_menu_reply() -> ReplyKeyboardMarkup:
@@ -25,7 +24,7 @@ def main_menu_reply() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text=BTN_STATUS), KeyboardButton(text=BTN_CHATS)],
             [KeyboardButton(text=BTN_TEMPLATES), KeyboardButton(text=BTN_SYNC)],
-            [KeyboardButton(text=BTN_PAUSE), KeyboardButton(text=BTN_HIDE)],
+            [KeyboardButton(text=BTN_PAUSE)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -150,26 +149,19 @@ def chat_detail_kb(
                 InlineKeyboardButton(text="➕", callback_data=f"ppd:{cid}:1"),
             ],
             [
-                InlineKeyboardButton(text="➖30", callback_data=f"intv:{cid}:-30"),
-                InlineKeyboardButton(text=f"Интервал: {chat.min_interval_minutes}м", callback_data="noop"),
-                InlineKeyboardButton(text="➕30", callback_data=f"intv:{cid}:30"),
+                InlineKeyboardButton(text="➖", callback_data=f"win:{cid}:s:-1"),
+                InlineKeyboardButton(text=f"Старт: {chat.window_start:%H}:00", callback_data="noop"),
+                InlineKeyboardButton(text="➕", callback_data=f"win:{cid}:s:1"),
             ],
             [
-                InlineKeyboardButton(text="Старт ➖", callback_data=f"win:{cid}:s:-1"),
-                InlineKeyboardButton(
-                    text=f"{chat.window_start:%H}–{chat.window_end:%H}", callback_data="noop"
-                ),
-                InlineKeyboardButton(text="Старт ➕", callback_data=f"win:{cid}:s:1"),
-            ],
-            [
-                InlineKeyboardButton(text="Стоп ➖", callback_data=f"win:{cid}:e:-1"),
-                InlineKeyboardButton(text="⠀", callback_data="noop"),
-                InlineKeyboardButton(text="Стоп ➕", callback_data=f"win:{cid}:e:1"),
+                InlineKeyboardButton(text="➖", callback_data=f"win:{cid}:e:-1"),
+                InlineKeyboardButton(text=f"Стоп: {chat.window_end:%H}:00", callback_data="noop"),
+                InlineKeyboardButton(text="➕", callback_data=f"win:{cid}:e:1"),
             ],
             day_row,
             [
                 InlineKeyboardButton(
-                    text="📋 Применить настройки ко всем разрешённым",
+                    text="📋 Применить ко всем разрешённым",
                     callback_data=f"applyall:{cid}",
                 )
             ],
