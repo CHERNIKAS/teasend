@@ -22,18 +22,49 @@ class DialogInfo:
 
 
 async def read_dialogs(telegram_service) -> list[DialogInfo]:
-    """List groups/supergroups the account belongs to (skip private chats)."""
+    """List groups and supergroups the account belongs to.
+
+    Skips private chats and broadcast channels: Telethon reports both supergroups
+    and broadcast channels as `is_channel`, so we tell them apart by the entity's
+    `broadcast` flag and keep only groups/supergroups (where you can actually post
+    as a member)."""
     out: list[DialogInfo] = []
     async for dialog in telegram_service.client.iter_dialogs():
+        entity = dialog.entity
+        if getattr(entity, "broadcast", False):
+            continue  # broadcast channel — not a group, skip
         if dialog.is_group or dialog.is_channel:
             out.append(
                 DialogInfo(
                     tg_chat_id=dialog.id,
                     title=dialog.name or str(dialog.id),
-                    username=getattr(dialog.entity, "username", None),
+                    username=getattr(entity, "username", None),
                 )
             )
     return out
+
+
+async def broadcast_channel_ids(telegram_service) -> set[int]:
+    """Ids of broadcast channels the account follows (not groups)."""
+    ids: set[int] = set()
+    async for dialog in telegram_service.client.iter_dialogs():
+        if getattr(dialog.entity, "broadcast", False):
+            ids.add(dialog.id)
+    return ids
+
+
+async def purge_channels(session: AsyncSession, telegram_service) -> int:
+    """Delete previously-imported broadcast channels from the chats table."""
+    ids = await broadcast_channel_ids(telegram_service)
+    if not ids:
+        return 0
+    rows = list((await session.scalars(
+        select(Chat).where(Chat.tg_chat_id.in_(ids))
+    )).all())
+    for chat in rows:
+        await session.delete(chat)
+    await session.commit()
+    return len(rows)
 
 
 async def import_dialogs(session: AsyncSession, dialogs: list[DialogInfo]) -> tuple[int, int]:

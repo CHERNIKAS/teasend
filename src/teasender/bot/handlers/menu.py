@@ -176,6 +176,18 @@ async def _do_sync(sessionmaker, settings: Settings, telegram) -> str:
     )
 
 
+@router.message(Command("purge_channels"))
+async def on_purge_channels(message: Message, sessionmaker, telegram) -> None:
+    await ui.delete_safe(message.bot, message.chat.id, message.message_id)
+    await ui.open_panel(message.bot, message.chat.id, "🧹 Удаляю broadcast-каналы…")
+    async with sessionmaker() as s:
+        n = await chats_svc.purge_channels(s, telegram)
+    await ui.set_panel(
+        message.bot, message.chat.id,
+        f"🧹 Удалено broadcast-каналов: <b>{n}</b>.\nОстались только группы/супергруппы.",
+    )
+
+
 @router.message(F.text == BTN_SYNC)
 async def on_sync_msg(message: Message, sessionmaker, settings: Settings, telegram) -> None:
     await ui.delete_safe(message.bot, message.chat.id, message.message_id)
