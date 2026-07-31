@@ -165,12 +165,12 @@ async def on_pause_msg(message: Message, sessionmaker, settings: Settings) -> No
 async def _do_sync(sessionmaker, settings: Settings, telegram) -> str:
     async with sessionmaker() as s:
         drafts = await telegram.read_drafts(settings.drafts_channel)
-        t_created, t_updated = await tpl_svc.sync_templates(s, drafts)
+        t_created, t_updated, t_removed = await tpl_svc.sync_templates(s, drafts)
         dialogs = await chats_svc.read_dialogs(telegram)
         c_created, c_updated = await chats_svc.import_dialogs(s, dialogs)
     return (
         f"🔄 <b>Синхронизация завершена</b>\n"
-        f"Шаблоны: +{t_created}, обновлено {t_updated}\n"
+        f"Шаблоны: +{t_created}, обновлено {t_updated}, удалено {t_removed}\n"
         f"Чаты: +{c_created}, обновлено {c_updated}\n\n"
         f"Новые чаты — со статусом «не проверен». Отметьте разрешённые в «Чаты» → «Не проверенные»."
     )

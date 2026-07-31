@@ -8,13 +8,17 @@ from teasender.db.models import Template
 from teasender.telegram.client import DraftTemplate
 
 
-async def sync_templates(session: AsyncSession, drafts: list[DraftTemplate]) -> tuple[int, int]:
-    """Insert new drafts as templates, refresh preview text of existing ones.
+async def sync_templates(session: AsyncSession, drafts: list[DraftTemplate]) -> tuple[int, int, int]:
+    """Mirror the drafts channel into templates.
 
-    Returns (created, updated). Existing templates are matched by
-    (source_channel_id, source_message_id) and never duplicated.
+    Inserts new drafts, refreshes existing ones, and removes templates whose
+    source message is gone from the channel. Matched by
+    (source_channel_id, source_message_id).
+
+    Returns (created, updated, removed). If the channel returned nothing (e.g. a
+    read error) no deletion happens — we never wipe on an empty read.
     """
-    created = updated = 0
+    created = updated = removed = 0
     for d in drafts:
         existing = await session.scalar(
             select(Template).where(
@@ -37,5 +41,17 @@ async def sync_templates(session: AsyncSession, drafts: list[DraftTemplate]) -> 
             existing.preview_text = d.preview_text
             existing.grouped_id = d.grouped_id
             updated += 1
+
+    if drafts:
+        channel_ids = {d.source_channel_id for d in drafts}
+        seen = {(d.source_channel_id, d.source_message_id) for d in drafts}
+        stale = list((await session.scalars(
+            select(Template).where(Template.source_channel_id.in_(channel_ids))
+        )).all())
+        for t in stale:
+            if (t.source_channel_id, t.source_message_id) not in seen:
+                await session.delete(t)
+                removed += 1
+
     await session.commit()
-    return created, updated
+    return created, updated, removed
