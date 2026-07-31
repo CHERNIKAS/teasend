@@ -12,7 +12,7 @@ import random
 from datetime import time
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -31,7 +31,11 @@ from teasender.db.models import utcnow
 router = Router(name="chats")
 
 PAGE = 8
+SEARCH_LIMIT = 25
 _ELIGIBLE = (Permission.allowed, Permission.owner)
+
+# chat_id -> last search query, so toggles can re-render the same results.
+_SEARCH: dict[int, str] = {}
 
 
 def _days_str(mask: int) -> str:
@@ -337,6 +341,94 @@ async def on_perm_page(cq: CallbackQuery, sessionmaker) -> None:
     await cq.answer(f"Разрешено: {n}", show_alert=True)
     text, kb = await _list_payload(sessionmaker, filt, page)
     await ui.edit_panel(cq.message, text, kb)
+
+
+# --- Search + quick exclude ---------------------------------------------------
+
+def _mark(chat: Chat) -> str:
+    if chat.permission == Permission.denied:
+        return "⛔"
+    if chat.permission in _ELIGIBLE:
+        return "✅"
+    return "❔"
+
+
+async def _search_payload(sessionmaker, query: str):
+    async with sessionmaker() as s:
+        rows = list((await s.scalars(
+            select(Chat)
+            .where(Chat.title.ilike(f"%{query}%"))
+            .order_by(Chat.title)
+            .limit(SEARCH_LIMIT + 1)
+        )).all())
+    truncated = len(rows) > SEARCH_LIMIT
+    rows = rows[:SEARCH_LIMIT]
+
+    kb: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text=f"{_mark(c)} {c.title[:32]}", callback_data=f"xtgl:{c.id}")]
+        for c in rows
+    ]
+    if rows:
+        kb.append([
+            InlineKeyboardButton(text="⛔ Исключить всё", callback_data="xall:deny"),
+            InlineKeyboardButton(text="✅ Разрешить всё", callback_data="xall:allow"),
+        ])
+    kb.append([InlineKeyboardButton(text="⬅️ К чатам", callback_data="chats:allowed:0")])
+
+    if not rows:
+        text = f"🔎 По «{query}» ничего не найдено."
+    else:
+        text = (
+            f"🔎 <b>Поиск: «{query}»</b> — найдено {len(rows)}{'+' if truncated else ''}\n"
+            f"Тап по чату — вычеркнуть (⛔) или вернуть (✅)."
+        )
+    return text, InlineKeyboardMarkup(inline_keyboard=kb)
+
+
+@router.message(F.text.startswith("/find"))
+async def on_find(message: Message, sessionmaker) -> None:
+    await ui.delete_safe(message.bot, message.chat.id, message.message_id)
+    query = message.text[len("/find"):].strip()
+    if not query:
+        await ui.open_panel(message.bot, message.chat.id, "Формат: <code>/find часть названия</code>")
+        return
+    _SEARCH[message.chat.id] = query
+    text, kb = await _search_payload(sessionmaker, query)
+    await ui.open_panel(message.bot, message.chat.id, text, kb)
+
+
+@router.callback_query(F.data.startswith("xtgl:"))
+async def on_search_toggle(cq: CallbackQuery, sessionmaker) -> None:
+    chat_id = int(cq.data.split(":")[1])
+    async with sessionmaker() as s:
+        chat = await s.get(Chat, chat_id)
+        if chat is not None:
+            chat.permission = (
+                Permission.allowed if chat.permission == Permission.denied else Permission.denied
+            )
+            await s.commit()
+    query = _SEARCH.get(cq.message.chat.id, "")
+    text, kb = await _search_payload(sessionmaker, query)
+    await ui.edit_panel(cq.message, text, kb)
+    await cq.answer()
+
+
+@router.callback_query(F.data.startswith("xall:"))
+async def on_search_bulk(cq: CallbackQuery, sessionmaker) -> None:
+    action = cq.data.split(":")[1]
+    query = _SEARCH.get(cq.message.chat.id, "")
+    new_perm = Permission.denied if action == "deny" else Permission.allowed
+    async with sessionmaker() as s:
+        rows = list((await s.scalars(
+            select(Chat).where(Chat.title.ilike(f"%{query}%"))
+        )).all())
+        for c in rows:
+            c.permission = new_perm
+        await s.commit()
+        n = len(rows)
+    text, kb = await _search_payload(sessionmaker, query)
+    await ui.edit_panel(cq.message, text, kb)
+    await cq.answer(f"Обновлено: {n}", show_alert=True)
 
 
 @router.message(F.text.startswith("/rule"))
