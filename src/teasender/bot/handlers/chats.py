@@ -126,8 +126,7 @@ def _detail_text(chat: Chat) -> str:
     return (
         f"<b>{chat.title}</b>\n"
         f"ID: <code>{chat.tg_chat_id}</code>\n"
-        f"Разрешение: {perm_label(chat.permission)}\n"
-        f"Активен: {'да' if chat.is_enabled else 'нет'}\n"
+        f"Статус: {perm_label(chat.permission)}\n"
         f"{tpl_line}\n"
         f"Отправлено/ошибок: {chat.success_count}/{chat.fail_count}"
     )
@@ -165,23 +164,19 @@ async def _mutate_and_render(cq: CallbackQuery, sessionmaker, chat_id: int, fn) 
         await _render_detail(cq.message, chat)
 
 
+def _set_permission(chat: Chat, value: str) -> None:
+    """Permission is the single on/off switch: allowing a chat also activates it,
+    denying it also deactivates it."""
+    perm = Permission(value)
+    chat.permission = perm
+    chat.is_enabled = perm in _ELIGIBLE
+
+
 @router.callback_query(F.data.startswith("perm:"))
 async def on_set_perm(cq: CallbackQuery, sessionmaker) -> None:
     _, chat_id, value = cq.data.split(":")
-    await _mutate_and_render(
-        cq, sessionmaker, int(chat_id),
-        lambda c: setattr(c, "permission", Permission(value)),
-    )
-    await cq.answer(f"Статус: {value}")
-
-
-@router.callback_query(F.data.startswith("enable:"))
-async def on_toggle_enable(cq: CallbackQuery, sessionmaker) -> None:
-    chat_id = int(cq.data.split(":")[1])
-    await _mutate_and_render(
-        cq, sessionmaker, chat_id, lambda c: setattr(c, "is_enabled", not c.is_enabled)
-    )
-    await cq.answer("Готово")
+    await _mutate_and_render(cq, sessionmaker, int(chat_id), lambda c: _set_permission(c, value))
+    await cq.answer("✅ Разрешён и активен" if value == "allowed" else "⛔ Запрещён")
 
 
 @router.callback_query(F.data.startswith("ppd:"))
@@ -303,8 +298,8 @@ async def on_test_now(cq: CallbackQuery, sessionmaker) -> None:
         if chat is None:
             await cq.answer("Чат не найден", show_alert=True)
             return
-        if chat.permission not in _ELIGIBLE or not chat.is_enabled:
-            await cq.answer("Чат должен быть разрешён и включён", show_alert=True)
+        if chat.permission not in _ELIGIBLE:
+            await cq.answer("Сначала нажми «✅ Разрешить»", show_alert=True)
             return
         # Pick this chat's template (mix if several); fall back to first active.
         assigned = [t for t in chat.templates if t.is_active]
@@ -335,7 +330,7 @@ async def on_perm_page(cq: CallbackQuery, sessionmaker) -> None:
         for c in chats:
             if c.permission == Permission.unknown:
                 db_chat = await s.get(Chat, c.id)
-                db_chat.permission = Permission.allowed
+                _set_permission(db_chat, "allowed")
                 n += 1
         await s.commit()
     await cq.answer(f"Разрешено: {n}", show_alert=True)
@@ -403,9 +398,8 @@ async def on_search_toggle(cq: CallbackQuery, sessionmaker) -> None:
     async with sessionmaker() as s:
         chat = await s.get(Chat, chat_id)
         if chat is not None:
-            chat.permission = (
-                Permission.allowed if chat.permission == Permission.denied else Permission.denied
-            )
+            value = "denied" if chat.permission != Permission.denied else "allowed"
+            _set_permission(chat, value)
             await s.commit()
     query = _SEARCH.get(cq.message.chat.id, "")
     text, kb = await _search_payload(sessionmaker, query)
@@ -417,13 +411,13 @@ async def on_search_toggle(cq: CallbackQuery, sessionmaker) -> None:
 async def on_search_bulk(cq: CallbackQuery, sessionmaker) -> None:
     action = cq.data.split(":")[1]
     query = _SEARCH.get(cq.message.chat.id, "")
-    new_perm = Permission.denied if action == "deny" else Permission.allowed
+    value = "deny" if action == "deny" else "allow"
     async with sessionmaker() as s:
         rows = list((await s.scalars(
             select(Chat).where(Chat.title.ilike(f"%{query}%"))
         )).all())
         for c in rows:
-            c.permission = new_perm
+            _set_permission(c, "denied" if value == "deny" else "allowed")
         await s.commit()
         n = len(rows)
     text, kb = await _search_payload(sessionmaker, query)

@@ -83,11 +83,10 @@ def chats_list_kb(
     kb: list[list[InlineKeyboardButton]] = [_filter_row(filt)]
 
     for c in chats:
-        flag = "🔔" if c.is_enabled else "🔕"
         kb.append(
             [
                 InlineKeyboardButton(
-                    text=f"{perm_label(c.permission)} {flag} · {c.title[:28]}",
+                    text=f"{perm_label(c.permission)} · {c.title[:30]}",
                     callback_data=f"chat:{c.id}",
                 )
             ]
@@ -123,8 +122,6 @@ def chat_detail_kb(
     chat: Chat, tpl_count: int, back_filt: str = "allowed", back_page: int = 0
 ) -> InlineKeyboardMarkup:
     cid = chat.id
-    toggle_enabled = "🔕 Выключить" if chat.is_enabled else "🔔 Включить"
-
     tpl_label = f"🧩 Шаблоны чата: {tpl_count}" if tpl_count else "🧩 Шаблоны: по умолчанию"
 
     day_row = [
@@ -141,7 +138,6 @@ def chat_detail_kb(
                 InlineKeyboardButton(text="✅ Разрешить", callback_data=f"perm:{cid}:allowed"),
                 InlineKeyboardButton(text="⛔ Запретить", callback_data=f"perm:{cid}:denied"),
             ],
-            [InlineKeyboardButton(text=toggle_enabled, callback_data=f"enable:{cid}")],
             [InlineKeyboardButton(text=tpl_label, callback_data=f"ctpl:{cid}")],
             [
                 InlineKeyboardButton(text="➖", callback_data=f"ppd:{cid}:-1"),
