@@ -11,18 +11,21 @@ from teasender.db.models import Template
 router = Router(name="templates")
 
 
+_SOURCE_BTN = InlineKeyboardButton(text="📡 Сменить источник рассылки", callback_data="source")
+
+
 def _templates_kb(rows: list[Template]) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=f"{'🟢' if t.is_active else '⚪️'} {(t.preview_text or t.label or '')[:40]}",
-                    callback_data=f"tpl:{t.id}",
-                )
-            ]
-            for t in rows
+    kb = [
+        [
+            InlineKeyboardButton(
+                text=f"{'🟢' if t.is_active else '⚪️'} {(t.preview_text or t.label or '')[:40]}",
+                callback_data=f"tpl:{t.id}",
+            )
         ]
-    )
+        for t in rows
+    ]
+    kb.append([_SOURCE_BTN])
+    return InlineKeyboardMarkup(inline_keyboard=kb)
 
 
 async def _load(sessionmaker) -> list[Template]:
@@ -32,7 +35,10 @@ async def _load(sessionmaker) -> list[Template]:
 
 def _payload(rows: list[Template]):
     if not rows:
-        return "Шаблонов нет. Напишите объявления в канал-черновик и нажмите «Синхронизация».", None
+        return (
+            "Шаблонов нет. Напишите объявления в канал-черновик и нажмите «Синхронизация».",
+            InlineKeyboardMarkup(inline_keyboard=[[_SOURCE_BTN]]),
+        )
     return "📝 <b>Шаблоны</b> (🟢 активные участвуют в рассылке):", _templates_kb(rows)
 
 

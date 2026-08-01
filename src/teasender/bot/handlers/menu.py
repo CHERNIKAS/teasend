@@ -22,7 +22,7 @@ from teasender.bot.keyboards import (
 )
 from teasender.config import Settings
 from teasender.core.enums import AccountState, Permission, PublicationStatus
-from teasender.db.models import Account, Chat, Publication, Template, as_utc
+from teasender.db.models import Account, Chat, Publication, Setting, Template, as_utc
 from teasender.services import chats as chats_svc
 from teasender.services import templates as tpl_svc
 
@@ -162,9 +162,77 @@ async def on_pause_msg(message: Message, sessionmaker, settings: Settings) -> No
     await ui.open_panel(message.bot, message.chat.id, text, status_kb())
 
 
+_SOURCE_KEY = "drafts_channel"
+
+
+async def _get_source(s, settings: Settings) -> str:
+    row = await s.get(Setting, _SOURCE_KEY)
+    return row.value if row else settings.drafts_channel
+
+
+def _as_channel(value: str):
+    """Pass numeric ids to Telethon as int, usernames/links as str."""
+    v = value.strip()
+    return int(v) if v.lstrip("-").isdigit() else v
+
+
+@router.callback_query(F.data == "source")
+async def on_source(cq: CallbackQuery, sessionmaker, settings: Settings) -> None:
+    async with sessionmaker() as s:
+        current = await _get_source(s, settings)
+    await ui.edit_panel(
+        cq.message,
+        f"📡 <b>Источник рассылки</b> (канал-черновик)\n"
+        f"Сейчас: <code>{current}</code>\n\n"
+        f"Чтобы сменить, отправь:\n"
+        f"<code>/source @username</code> или <code>/source -100123456789</code>\n\n"
+        f"Аккаунт должен состоять в этом канале.",
+    )
+    await cq.answer()
+
+
+@router.message(Command("source"))
+async def on_set_source(message: Message, sessionmaker, settings: Settings, telegram) -> None:
+    await ui.delete_safe(message.bot, message.chat.id, message.message_id)
+    value = message.text[len("/source"):].strip()
+    if not value:
+        async with sessionmaker() as s:
+            current = await _get_source(s, settings)
+        await ui.open_panel(
+            message.bot, message.chat.id,
+            f"Текущий источник: <code>{current}</code>\n"
+            f"Формат: <code>/source @username</code> или <code>/source -100123456789</code>",
+        )
+        return
+    # Validate that the account can actually resolve this channel.
+    try:
+        entity = await telegram.client.get_entity(_as_channel(value))
+        title = getattr(entity, "title", None) or getattr(entity, "username", None) or value
+    except Exception as exc:  # noqa: BLE001
+        await ui.open_panel(
+            message.bot, message.chat.id,
+            f"❌ Не удалось открыть канал <code>{value}</code>: {type(exc).__name__}.\n"
+            f"Проверь, что аккаунт состоит в нём и адрес верный.",
+        )
+        return
+    async with sessionmaker() as s:
+        row = await s.get(Setting, _SOURCE_KEY)
+        if row is None:
+            s.add(Setting(key=_SOURCE_KEY, value=value))
+        else:
+            row.value = value
+        await s.commit()
+    await ui.open_panel(
+        message.bot, message.chat.id,
+        f"✅ Источник рассылки: <b>{title}</b> (<code>{value}</code>).\n"
+        f"Нажми «Синхронизация», чтобы подтянуть шаблоны отсюда.",
+    )
+
+
 async def _do_sync(sessionmaker, settings: Settings, telegram) -> str:
     async with sessionmaker() as s:
-        drafts = await telegram.read_drafts(settings.drafts_channel)
+        source = await _get_source(s, settings)
+        drafts = await telegram.read_drafts(_as_channel(source))
         t_created, t_updated, t_removed = await tpl_svc.sync_templates(s, drafts)
         dialogs = await chats_svc.read_dialogs(telegram)
         c_created, c_updated = await chats_svc.import_dialogs(s, dialogs)
