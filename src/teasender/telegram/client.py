@@ -60,27 +60,43 @@ class TelegramService:
     # --- drafts -> templates ---------------------------------------------------
 
     async def read_drafts(self, channel: str | int, limit: int = 200) -> list[DraftTemplate]:
-        """Read the drafts channel and collapse albums into one template each."""
+        """Read the drafts channel and collapse albums into one template each.
+
+        For an album the anchor is the *earliest* message (lowest id) so sending,
+        which walks forward from the anchor, captures the whole group; the caption
+        is taken from whichever album member actually carries text."""
         entity = await self._client.get_entity(channel)
         channel_id = entity.id
-        seen_groups: set[int] = set()
+        # grouped_id -> {"min_id": int, "text": str}
+        groups: dict[int, dict] = {}
         out: list[DraftTemplate] = []
 
         async for msg in self._client.iter_messages(entity, limit=limit):
             if not (msg.message or msg.media):
                 continue
             gid = msg.grouped_id
-            if gid is not None:
-                if gid in seen_groups:
-                    continue
-                seen_groups.add(gid)
-            preview = (msg.message or "[медиа без текста]")[:200]
+            if gid is None:
+                out.append(
+                    DraftTemplate(
+                        source_channel_id=channel_id,
+                        source_message_id=msg.id,
+                        grouped_id=None,
+                        preview_text=(msg.message or "[медиа без текста]")[:200],
+                    )
+                )
+                continue
+            g = groups.setdefault(gid, {"min_id": msg.id, "text": ""})
+            g["min_id"] = min(g["min_id"], msg.id)
+            if not g["text"] and msg.message:
+                g["text"] = msg.message
+
+        for gid, g in groups.items():
             out.append(
                 DraftTemplate(
                     source_channel_id=channel_id,
-                    source_message_id=msg.id,
+                    source_message_id=g["min_id"],
                     grouped_id=gid,
-                    preview_text=preview,
+                    preview_text=(g["text"] or "[альбом]")[:200],
                 )
             )
         return out

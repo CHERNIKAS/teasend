@@ -43,12 +43,11 @@ async def sync_templates(session: AsyncSession, drafts: list[DraftTemplate]) -> 
             updated += 1
 
     if drafts:
-        channel_ids = {d.source_channel_id for d in drafts}
+        # Mirror the current source only: anything not present in this read
+        # (stale posts AND templates left over from a previous source channel).
         seen = {(d.source_channel_id, d.source_message_id) for d in drafts}
-        stale = list((await session.scalars(
-            select(Template).where(Template.source_channel_id.in_(channel_ids))
-        )).all())
-        for t in stale:
+        all_templates = list((await session.scalars(select(Template))).all())
+        for t in all_templates:
             if (t.source_channel_id, t.source_message_id) not in seen:
                 await session.delete(t)
                 removed += 1
