@@ -24,9 +24,8 @@ from teasender.bot.keyboards import (
     chats_list_kb,
     perm_label,
 )
-from teasender.core.enums import Permission, PublicationStatus
-from teasender.db.models import Chat, ChatTemplate, Publication, Template
-from teasender.db.models import utcnow
+from teasender.core.enums import Permission
+from teasender.db.models import Chat, ChatTemplate, Template
 
 router = Router(name="chats")
 
@@ -291,15 +290,14 @@ async def on_apply_all(cq: CallbackQuery, sessionmaker) -> None:
 
 
 @router.callback_query(F.data.startswith("testnow:"))
-async def on_test_now(cq: CallbackQuery, sessionmaker) -> None:
+async def on_test_now(cq: CallbackQuery, sessionmaker, telegram) -> None:
+    """Send one post to THIS chat right now, directly — independent of the queue,
+    the account pause state and the daily schedule."""
     chat_id = int(cq.data.split(":")[1])
     async with sessionmaker() as s:
         chat = await _get_chat(s, chat_id)
         if chat is None:
             await cq.answer("Чат не найден", show_alert=True)
-            return
-        if chat.permission not in _ELIGIBLE:
-            await cq.answer("Сначала нажми «✅ Разрешить»", show_alert=True)
             return
         # Pick this chat's template (mix if several); fall back to first active.
         assigned = [t for t in chat.templates if t.is_active]
@@ -310,14 +308,16 @@ async def on_test_now(cq: CallbackQuery, sessionmaker) -> None:
         if not assigned:
             await cq.answer("Нет активных шаблонов", show_alert=True)
             return
-        s.add(Publication(
-            chat_id=chat_id,
-            template_id=random.choice(assigned).id,
-            scheduled_at=utcnow(),
-            status=PublicationStatus.planned,
-        ))
-        await s.commit()
-    await cq.answer("🚀 Поставлено в очередь — уйдёт в течение минуты", show_alert=True)
+        tpl = random.choice(assigned)
+        target_tg_id = chat.tg_chat_id
+        src = (tpl.source_channel_id, tpl.source_message_id, tpl.grouped_id)
+
+    try:
+        await telegram.copy_to(target_tg_id, *src)
+    except Exception as exc:  # noqa: BLE001
+        await cq.answer(f"⚠️ Не ушло: {type(exc).__name__}", show_alert=True)
+        return
+    await cq.answer("✅ Отправлено в этот чат", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("permpage:"))
