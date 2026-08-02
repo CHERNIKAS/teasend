@@ -8,11 +8,13 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
+from telethon import events
 
 from teasender.bot.handlers import setup_handlers
 from teasender.config import get_settings
 from teasender.db.session import get_sessionmaker
 from teasender.scheduler.runner import BackgroundRunner
+from teasender.services.deletions import handle_deletions
 from teasender.services.notify import Notifier
 from teasender.services.sender import Sender
 from teasender.telegram.client import TelegramService
@@ -37,6 +39,16 @@ async def main() -> None:
     notifier = Notifier(bot, settings.admin_user_ids)
     sender = Sender(sessionmaker, telegram, settings, notifier)
     runner = BackgroundRunner(settings, sender)
+
+    @telegram.client.on(events.MessageDeleted)
+    async def _on_msg_deleted(event) -> None:  # noqa: ANN001
+        try:
+            await handle_deletions(
+                sessionmaker, notifier, event.deleted_ids,
+                getattr(event, "channel_id", None),
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("deletion handler failed")
 
     dp["sessionmaker"] = sessionmaker
     dp["settings"] = settings
