@@ -29,7 +29,7 @@ from teasender.db.models import Chat, ChatTemplate, Template
 
 router = Router(name="chats")
 
-PAGE = 8
+PAGE = 15
 SEARCH_LIMIT = 25
 _ELIGIBLE = (Permission.allowed, Permission.owner)
 
