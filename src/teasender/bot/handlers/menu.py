@@ -22,7 +22,7 @@ from teasender.bot.keyboards import (
 )
 from teasender.config import Settings
 from teasender.core.enums import AccountState, Permission, PublicationStatus
-from teasender.db.models import Account, Chat, Publication, Setting, Template, as_utc
+from teasender.db.models import Account, Chat, Publication, Setting, Template, as_utc, utcnow
 from teasender.services import chats as chats_svc
 from teasender.services import templates as tpl_svc
 
@@ -83,7 +83,12 @@ async def _build_status(sessionmaker, settings: Settings) -> str:
     mode = "🔴 БОЕВОЙ" if not settings.dry_run else "🧪 DRY-RUN (без отправки)"
 
     tz = ZoneInfo(settings.timezone)
-    next_txt = as_utc(next_dt).astimezone(tz).strftime("%d.%m %H:%M") if next_dt else "—"
+    if next_dt is None:
+        next_txt = "—"
+    elif as_utc(next_dt) <= utcnow():
+        next_txt = "сейчас"
+    else:
+        next_txt = as_utc(next_dt).astimezone(tz).strftime("%d.%m %H:%M")
 
     warn = ""
     if eligible_chats == 0:

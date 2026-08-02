@@ -14,7 +14,7 @@ import random
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -54,6 +54,20 @@ async def plan_day(session: AsyncSession, tz_name: str, now: datetime | None = N
     today = now_local.date()
     weekday = now_local.weekday()  # Mon=0
 
+    day_start_utc, day_end_utc = _local_day_bounds_utc(today, tz)
+
+    # Cancel leftovers planned for previous days: never fire yesterday's posts
+    # late (that would dump a burst and look like spam).
+    await session.execute(
+        update(Publication)
+        .where(
+            Publication.status == PublicationStatus.planned,
+            Publication.scheduled_at < day_start_utc,
+        )
+        .values(status=PublicationStatus.cancelled)
+    )
+    await session.commit()
+
     active_templates = list(
         (
             await session.scalars(
@@ -76,7 +90,6 @@ async def plan_day(session: AsyncSession, tz_name: str, now: datetime | None = N
         ).all()
     )
 
-    day_start_utc, day_end_utc = _local_day_bounds_utc(today, tz)
     planned_total = 0
 
     for chat in chats:
