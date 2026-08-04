@@ -360,18 +360,18 @@ async def on_test_now(cq: CallbackQuery, sessionmaker, telegram) -> None:
 
 @router.callback_query(F.data.startswith("permpage:"))
 async def on_perm_page(cq: CallbackQuery, sessionmaker) -> None:
-    _, filt, page_s = cq.data.split(":")
+    _, filt, page_s, action = cq.data.split(":")
     page = int(page_s)
+    value = "allowed" if action == "allow" else "denied"
     chats, _ = await _load_page(sessionmaker, filt, page)
     async with sessionmaker() as s:
         n = 0
         for c in chats:
-            if c.permission == Permission.unknown:
-                db_chat = await s.get(Chat, c.id)
-                _set_permission(db_chat, "allowed")
-                n += 1
+            db_chat = await s.get(Chat, c.id)
+            _set_permission(db_chat, value)
+            n += 1
         await s.commit()
-    await cq.answer(f"Разрешено: {n}", show_alert=True)
+    await cq.answer(f"{'Разрешено' if action == 'allow' else 'Запрещено'}: {n}", show_alert=True)
     text, kb = await _list_payload(sessionmaker, filt, page)
     await ui.edit_panel(cq.message, text, kb)
 

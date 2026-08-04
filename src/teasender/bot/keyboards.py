@@ -100,15 +100,17 @@ def chats_list_kb(
     if nav:
         kb.append(nav)
 
-    if filt == "unknown" and chats:
-        kb.append(
-            [
-                InlineKeyboardButton(
-                    text="✅ Разрешить все на странице",
-                    callback_data=f"permpage:{filt}:{page}",
-                )
-            ]
-        )
+    if chats:
+        if filt in ("unknown", "denied", "all"):
+            kb.append([InlineKeyboardButton(
+                text="✅ Разрешить все на странице",
+                callback_data=f"permpage:{filt}:{page}:allow",
+            )])
+        if filt in ("unknown", "allowed", "all"):
+            kb.append([InlineKeyboardButton(
+                text="⛔ Запретить все на странице",
+                callback_data=f"permpage:{filt}:{page}:deny",
+            )])
 
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
