@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from teasender.config import Settings
@@ -41,7 +41,23 @@ class Sender:
     async def run_due_once(self) -> None:
         """Send every publication that is due now, one at a time."""
         if not await self._account_ready():
+            async with self._sm() as s:
+                acc = await s.scalar(select(Account).limit(1))
+            state = acc.state.value if acc else "no-account"
+            log.info("sender idle: account not ready (state=%s)", state)
             return
+
+        async with self._sm() as s:
+            due = await s.scalar(
+                select(func.count()).select_from(Publication).where(
+                    Publication.status == PublicationStatus.planned,
+                    Publication.scheduled_at <= utcnow(),
+                )
+            )
+        if not due:
+            log.info("sender idle: 0 publications due now")
+            return
+        log.info("sender: %d publication(s) due — sending", due)
 
         while True:
             pub = await self._claim_next_due()
@@ -111,9 +127,11 @@ class Sender:
             template = await s.get(Template, pub.template_id)
 
         if chat is None or template is None:
+            log.warning("pub %s: chat/template missing -> failed", pub.id)
             await self._finish(pub.id, PublicationStatus.failed, error="chat/template missing")
             return
         if not self._rule_ok(chat):
+            log.info("pub %s: rule no longer allows (chat=%s) -> skipped", pub.id, chat.title)
             await self._finish(pub.id, PublicationStatus.skipped, error="rule no longer allows")
             return
 
@@ -136,6 +154,7 @@ class Sender:
             return
 
         self._last_send_at = utcnow()
+        log.info("pub %s: sent to chat %s (msg_id=%s)", pub.id, chat.title, msg_id)
         await self._finish(pub.id, PublicationStatus.sent, tg_message_id=msg_id)
         await self._bump_chat(chat.id, ok=True)
         await self._notifier.send(f"✅ Доставлено в «{chat.title}»")
