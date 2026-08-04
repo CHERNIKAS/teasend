@@ -155,11 +155,11 @@ def chat_detail_kb(
                 InlineKeyboardButton(text="➕", callback_data=f"win:{cid}:e:1"),
             ],
             day_row,
-            [InlineKeyboardButton(text="🚀 Отправить сейчас (тест)", callback_data=f"testnow:{cid}")],
+            [InlineKeyboardButton(text="🚀 Отправить сейчас (тест)", callback_data=f"asktest:{cid}")],
             [
                 InlineKeyboardButton(
                     text="📋 Применить ко всем разрешённым",
-                    callback_data=f"applyall:{cid}",
+                    callback_data=f"askapply:{cid}",
                 )
             ],
             [InlineKeyboardButton(text="⬅️ К списку", callback_data=f"chats:{back_filt}:{back_page}")],

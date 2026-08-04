@@ -286,7 +286,41 @@ async def on_apply_all(cq: CallbackQuery, sessionmaker) -> None:
                 s.add(ChatTemplate(chat_id=c.id, template_id=tid))
         await s.commit()
         n = len(targets)
+        src = await _get_chat(s, src_id)
+        if src is not None:
+            await _render_detail(cq.message, src)
     await cq.answer(f"Применено к {n} чатам", show_alert=True)
+
+
+def _confirm_kb(yes_cb: str, no_cb: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Да", callback_data=yes_cb),
+        InlineKeyboardButton(text="❌ Нет", callback_data=no_cb),
+    ]])
+
+
+@router.callback_query(F.data.startswith("asktest:"))
+async def on_ask_test(cq: CallbackQuery, sessionmaker) -> None:
+    cid = int(cq.data.split(":")[1])
+    await ui.edit_panel(
+        cq.message,
+        "🚀 <b>Отправить тестовый пост в этот чат прямо сейчас?</b>\n"
+        "Уйдёт реальное сообщение (независимо от паузы).",
+        _confirm_kb(f"testnow:{cid}", f"chat:{cid}"),
+    )
+    await cq.answer()
+
+
+@router.callback_query(F.data.startswith("askapply:"))
+async def on_ask_apply(cq: CallbackQuery, sessionmaker) -> None:
+    cid = int(cq.data.split(":")[1])
+    await ui.edit_panel(
+        cq.message,
+        "📋 <b>Применить настройки этого чата ко ВСЕМ разрешённым?</b>\n"
+        "Их расписание (постов/день, окно, дни) и набор шаблонов будут перезаписаны.",
+        _confirm_kb(f"applyall:{cid}", f"chat:{cid}"),
+    )
+    await cq.answer()
 
 
 @router.callback_query(F.data.startswith("testnow:"))
@@ -312,12 +346,18 @@ async def on_test_now(cq: CallbackQuery, sessionmaker, telegram) -> None:
         target_tg_id = chat.tg_chat_id
         src = (tpl.source_channel_id, tpl.source_message_id, tpl.grouped_id)
 
+    ok = True
+    err = ""
     try:
         await telegram.copy_to(target_tg_id, *src)
     except Exception as exc:  # noqa: BLE001
-        await cq.answer(f"⚠️ Не ушло: {type(exc).__name__}", show_alert=True)
-        return
-    await cq.answer("✅ Отправлено в этот чат", show_alert=True)
+        ok, err = False, type(exc).__name__
+    # Return to the chat card either way.
+    async with sessionmaker() as s:
+        chat = await _get_chat(s, chat_id)
+        if chat is not None:
+            await _render_detail(cq.message, chat)
+    await cq.answer("✅ Отправлено в этот чат" if ok else f"⚠️ Не ушло: {err}", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("permpage:"))
