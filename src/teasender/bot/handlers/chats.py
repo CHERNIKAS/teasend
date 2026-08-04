@@ -33,8 +33,11 @@ PAGE = 15
 SEARCH_LIMIT = 25
 _ELIGIBLE = (Permission.allowed, Permission.owner)
 
-# chat_id -> last search query, so toggles can re-render the same results.
+# panel chat_id -> last search query, so toggles can re-render the same results.
 _SEARCH: dict[int, str] = {}
+# panel chat_id -> (filter, page) the current chat card was opened from, so
+# "back to list" returns to that list rather than the chat's new status.
+_ORIGIN: dict[int, tuple[str, int]] = {}
 
 
 def _days_str(mask: int) -> str:
@@ -104,16 +107,6 @@ async def on_chats(cq: CallbackQuery, sessionmaker) -> None:
     await cq.answer()
 
 
-def _back_filt(chat: Chat) -> str:
-    if chat.permission in _ELIGIBLE:
-        return "allowed"
-    if chat.permission == Permission.denied:
-        return "denied"
-    if chat.permission == Permission.unknown:
-        return "unknown"
-    return "all"
-
-
 def _detail_text(chat: Chat) -> str:
     tpls = [t for t in chat.templates if t.is_active]
     if tpls:
@@ -133,15 +126,20 @@ def _detail_text(chat: Chat) -> str:
 
 async def _render_detail(message: Message, chat: Chat) -> None:
     tpl_count = len([t for t in chat.templates if t.is_active])
+    filt, page = _ORIGIN.get(message.chat.id, ("allowed", 0))
     await ui.edit_panel(
         message, _detail_text(chat),
-        chat_detail_kb(chat, tpl_count, back_filt=_back_filt(chat)),
+        chat_detail_kb(chat, tpl_count, back_filt=filt, back_page=page),
     )
 
 
 @router.callback_query(F.data.startswith("chat:"))
 async def on_chat_detail(cq: CallbackQuery, sessionmaker) -> None:
-    chat_id = int(cq.data.split(":")[1])
+    parts = cq.data.split(":")
+    chat_id = int(parts[1])
+    # Remember which list we came from (only when the caller passed it).
+    if len(parts) >= 4:
+        _ORIGIN[cq.message.chat.id] = (parts[2], int(parts[3]))
     async with sessionmaker() as s:
         chat = await _get_chat(s, chat_id)
         if chat is None:

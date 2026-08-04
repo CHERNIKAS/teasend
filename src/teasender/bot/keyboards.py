@@ -87,7 +87,7 @@ def chats_list_kb(
             [
                 InlineKeyboardButton(
                     text=f"{perm_label(c.permission)} · {c.title[:30]}",
-                    callback_data=f"chat:{c.id}",
+                    callback_data=f"chat:{c.id}:{filt}:{page}",
                 )
             ]
         )
