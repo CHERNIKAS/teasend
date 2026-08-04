@@ -147,6 +147,9 @@ def _slot_times(
     (`global_min_send_interval`) prevents bursts."""
     window_start = _combine_utc(day, chat.window_start, tz)
     window_end = _combine_utc(day, chat.window_end, tz)
+    # "Stop" at or before "Start" (e.g. 07:00–00:00) means "until end of day".
+    if window_end <= window_start:
+        window_end = _combine_utc(day, time(0, 0), tz) + timedelta(days=1) - timedelta(seconds=1)
     now_utc = now_local.astimezone(timezone.utc)
 
     earliest = max(window_start, now_utc)

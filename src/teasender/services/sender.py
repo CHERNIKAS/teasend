@@ -23,6 +23,17 @@ log = logging.getLogger("teasender.sender")
 
 _ELIGIBLE = (Permission.allowed, Permission.owner)
 
+# Errors that mean "you fundamentally can't post here" — deny the chat instead
+# of retrying it day after day.
+_WRITE_FORBIDDEN = {
+    "ChatWriteForbiddenError",
+    "UserBannedInChannelError",
+    "ChannelPrivateError",
+    "ChatAdminRequiredError",
+    "UserDeactivatedError",
+    "ChatRestrictedError",
+}
+
 
 class Sender:
     def __init__(
@@ -189,10 +200,28 @@ class Sender:
                 await self._pause_flood(3600, "PeerFlood (спам-лимит Telegram)")
             return
 
-        # Non-retryable delivery problems.
+        # Permanent "can't post here" problems: stop hammering the chat, deny it.
+        if name in _WRITE_FORBIDDEN:
+            await self._finish(pub_id, PublicationStatus.failed, error=f"{name}: {exc}")
+            await self._deny_chat(chat.id)
+            await self._notifier.send(
+                f"⛔ В «{chat.title}» писать нельзя ({name}) — чат авто-запрещён."
+            )
+            return
+
+        # Other non-retryable delivery problems.
         await self._finish(pub_id, PublicationStatus.failed, error=f"{name}: {exc}")
         await self._bump_chat(chat.id, ok=False)
         await self._notifier.send(f"⚠️ Не доставлено в «{chat.title}»: {name}")
+
+    async def _deny_chat(self, chat_id) -> None:
+        async with self._sm() as s:
+            chat = await s.get(Chat, chat_id)
+            if chat is not None:
+                chat.permission = Permission.denied
+                chat.is_enabled = False
+                chat.fail_count += 1
+                await s.commit()
 
     # --- persistence helpers ---------------------------------------------------
 
