@@ -33,6 +33,9 @@ _WRITE_FORBIDDEN = {
     "ChatAdminRequiredError",
     "UserDeactivatedError",
     "ChatRestrictedError",
+    "ChatSendPhotosForbiddenError",
+    "ChatSendMediaForbiddenError",
+    "ChatSendGifsForbiddenError",
 }
 
 
