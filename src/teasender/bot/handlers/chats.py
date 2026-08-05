@@ -45,6 +45,19 @@ def _days_str(mask: int) -> str:
     return ",".join(n for i, n in enumerate(names) if mask & (1 << i)) or "—"
 
 
+_FILTER_LABELS = {
+    "allowed": "✅ Разрешённые",
+    "unknown": "❔ Не проверенные",
+    "denied": "⛔ Запрещённые",
+    "all": "Все",
+    "deleted": "🗑 Удаляли посты",
+}
+
+
+def _origin_filter(panel_chat_id: int) -> str:
+    return _ORIGIN.get(panel_chat_id, ("allowed", 0))[0]
+
+
 def _filter_clause(filt: str):
     if filt == "allowed":
         return Chat.permission.in_(_ELIGIBLE)
@@ -277,9 +290,12 @@ async def on_apply_all(cq: CallbackQuery, sessionmaker) -> None:
             await cq.answer("Чат не найден", show_alert=True)
             return
         src_tpl_ids = [t.id for t in src.templates]
-        targets = list((await s.scalars(
-            select(Chat).where(Chat.permission.in_(_ELIGIBLE), Chat.id != src_id)
-        )).all())
+        filt = _origin_filter(cq.message.chat.id)
+        clause = _filter_clause(filt)
+        stmt = select(Chat).where(Chat.id != src_id)
+        if clause is not None:
+            stmt = stmt.where(clause)
+        targets = list((await s.scalars(stmt)).all())
         for c in targets:
             c.posts_per_day = src.posts_per_day
             c.min_interval_minutes = src.min_interval_minutes
@@ -319,9 +335,11 @@ async def on_ask_test(cq: CallbackQuery, sessionmaker) -> None:
 @router.callback_query(F.data.startswith("askapply:"))
 async def on_ask_apply(cq: CallbackQuery, sessionmaker) -> None:
     cid = int(cq.data.split(":")[1])
+    filt = _origin_filter(cq.message.chat.id)
+    label = _FILTER_LABELS.get(filt, "Все")
     await ui.edit_panel(
         cq.message,
-        "📋 <b>Применить настройки этого чата ко ВСЕМ разрешённым?</b>\n"
+        f"📋 <b>Применить настройки этого чата ко ВСЕМ из списка «{label}»?</b>\n"
         "Их расписание (постов/день, окно, дни) и набор шаблонов будут перезаписаны.",
         _confirm_kb(f"applyall:{cid}", f"chat:{cid}"),
     )

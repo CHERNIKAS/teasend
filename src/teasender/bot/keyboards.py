@@ -164,7 +164,7 @@ def chat_detail_kb(
             [InlineKeyboardButton(text="🚀 Отправить сейчас (тест)", callback_data=f"asktest:{cid}")],
             [
                 InlineKeyboardButton(
-                    text="📋 Применить ко всем разрешённым",
+                    text="📋 Применить к текущему списку",
                     callback_data=f"askapply:{cid}",
                 )
             ],
