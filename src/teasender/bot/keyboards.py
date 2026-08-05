@@ -54,6 +54,9 @@ _FILTERS = [
     ("denied", "⛔ Запрещённые"),
     ("all", "Все"),
 ]
+_FILTERS2 = [
+    ("deleted", "🗑 Удаляли"),
+]
 
 _PERM_LABEL = {
     Permission.owner: "🏠 свой",
@@ -67,20 +70,21 @@ def perm_label(p: Permission) -> str:
     return _PERM_LABEL.get(p, str(p))
 
 
-def _filter_row(active: str) -> list[InlineKeyboardButton]:
-    row = []
-    for key, label in _FILTERS:
+def _filter_rows(active: str) -> list[list[InlineKeyboardButton]]:
+    def _btn(key, label):
         mark = "· " if key == active else ""
-        row.append(
-            InlineKeyboardButton(text=f"{mark}{label}", callback_data=f"chats:{key}:0")
-        )
-    return row
+        return InlineKeyboardButton(text=f"{mark}{label}", callback_data=f"chats:{key}:0")
+
+    return [
+        [_btn(k, lbl) for k, lbl in _FILTERS],
+        [_btn(k, lbl) for k, lbl in _FILTERS2],
+    ]
 
 
 def chats_list_kb(
     chats: list[Chat], filt: str, page: int, page_size: int, has_next: bool
 ) -> InlineKeyboardMarkup:
-    kb: list[list[InlineKeyboardButton]] = [_filter_row(filt)]
+    kb: list[list[InlineKeyboardButton]] = list(_filter_rows(filt))
 
     for c in chats:
         kb.append(

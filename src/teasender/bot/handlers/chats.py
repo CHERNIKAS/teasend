@@ -25,7 +25,7 @@ from teasender.bot.keyboards import (
     perm_label,
 )
 from teasender.core.enums import Permission
-from teasender.db.models import Chat, ChatTemplate, Template
+from teasender.db.models import Chat, ChatTemplate, LogEntry, Template
 
 router = Router(name="chats")
 
@@ -52,6 +52,12 @@ def _filter_clause(filt: str):
         return Chat.permission == Permission.unknown
     if filt == "denied":
         return Chat.permission == Permission.denied
+    if filt == "deleted":
+        return Chat.id.in_(
+            select(LogEntry.chat_id).where(
+                LogEntry.event == "post_deleted", LogEntry.chat_id.is_not(None)
+            )
+        )
     return None  # "all"
 
 
@@ -83,6 +89,7 @@ async def _list_text(sessionmaker, filt: str) -> str:
         "unknown": "❔ Не проверенные",
         "denied": "⛔ Запрещённые",
         "all": "Все",
+        "deleted": "🗑 Удаляли посты",
     }.get(filt, "Чаты")
     return f"💬 <b>Чаты</b> · {label} ({total})"
 
