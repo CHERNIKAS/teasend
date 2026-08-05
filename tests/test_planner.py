@@ -1,9 +1,14 @@
 """Planner: permission gate, per-chat quota, idempotency."""
 from __future__ import annotations
 
-from datetime import time
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
 
 import pytest
+
+# Plan as if at the very start of the window, so the full daily quota applies
+# (the planner scales the quota down for late starts).
+_START_OF_DAY = datetime(2026, 6, 1, 0, 1, tzinfo=ZoneInfo("Europe/Istanbul"))
 
 from teasender.core.enums import Permission, PublicationStatus
 from teasender.db.models import Chat, Publication, Template
@@ -42,7 +47,7 @@ async def test_permission_gate_and_quota(sessionmaker):
         ])
         await s.commit()
 
-        n = await plan_day(s, "Europe/Istanbul")
+        n = await plan_day(s, "Europe/Istanbul", now=_START_OF_DAY)
 
     async with sessionmaker() as s:
         total = await s.scalar(select(func.count()).select_from(Publication))
@@ -63,8 +68,8 @@ async def test_idempotent_topup(sessionmaker):
         await _seed_template(s)
         s.add(_chat(tg=-1, title="allowed", posts_per_day=3, min_interval_minutes=30))
         await s.commit()
-        await plan_day(s, "Europe/Istanbul")
-        await plan_day(s, "Europe/Istanbul")  # second run must not exceed quota
+        await plan_day(s, "Europe/Istanbul", now=_START_OF_DAY)
+        await plan_day(s, "Europe/Istanbul", now=_START_OF_DAY)  # second run must not exceed quota
 
     async with sessionmaker() as s:
         total = await s.scalar(
@@ -81,5 +86,5 @@ async def test_days_mask_excludes_today(sessionmaker):
         # days_mask=0 -> no weekday enabled -> nothing planned.
         s.add(_chat(tg=-1, title="allowed", days_mask=0))
         await s.commit()
-        n = await plan_day(s, "Europe/Istanbul")
+        n = await plan_day(s, "Europe/Istanbul", now=_START_OF_DAY)
     assert n == 0

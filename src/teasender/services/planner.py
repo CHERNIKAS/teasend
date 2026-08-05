@@ -39,6 +39,16 @@ def _combine_utc(day: date, t: time, tz: ZoneInfo) -> datetime:
     return datetime.combine(day, t, tzinfo=tz).astimezone(timezone.utc)
 
 
+def _window_bounds_utc(chat: Chat, day: date, tz: ZoneInfo) -> tuple[datetime, datetime]:
+    """The chat's posting window today, in UTC. "Stop" at or before "Start"
+    (e.g. 07:00–00:00) means "until end of day"."""
+    start = _combine_utc(day, chat.window_start, tz)
+    end = _combine_utc(day, chat.window_end, tz)
+    if end <= start:
+        end = _combine_utc(day, time(0, 0), tz) + timedelta(days=1) - timedelta(seconds=1)
+    return start, end
+
+
 def _chat_templates(chat: Chat, active_templates: list[Template]) -> list[Template]:
     """Templates this chat should post. Its own assigned+active ones; if it has
     none assigned yet, fall back to the first active template globally."""
@@ -112,7 +122,15 @@ async def plan_day(session: AsyncSession, tz_name: str, now: datetime | None = N
                 ),
             )
         )
-        remaining = chat.posts_per_day - (already or 0)
+        # Scale the daily quota by how much of the window is still ahead, so a
+        # late start sends only its fair share, not the whole day's posts at once.
+        w_start, w_end = _window_bounds_utc(chat, today, tz)
+        now_utc = now_local.astimezone(timezone.utc)
+        total_s = (w_end - w_start).total_seconds()
+        left_s = (w_end - max(w_start, now_utc)).total_seconds()
+        frac = min(1.0, max(0.0, left_s / total_s)) if total_s > 0 else 0.0
+        target = round(chat.posts_per_day * frac)
+        remaining = target - (already or 0)
         if remaining <= 0:
             continue
 
@@ -145,11 +163,7 @@ def _slot_times(
     times — reshuffled every day the planner runs. No fixed minimum interval:
     the segmenting keeps posts apart, and the account-wide send throttle
     (`global_min_send_interval`) prevents bursts."""
-    window_start = _combine_utc(day, chat.window_start, tz)
-    window_end = _combine_utc(day, chat.window_end, tz)
-    # "Stop" at or before "Start" (e.g. 07:00–00:00) means "until end of day".
-    if window_end <= window_start:
-        window_end = _combine_utc(day, time(0, 0), tz) + timedelta(days=1) - timedelta(seconds=1)
+    window_start, window_end = _window_bounds_utc(chat, day, tz)
     now_utc = now_local.astimezone(timezone.utc)
 
     earliest = max(window_start, now_utc)

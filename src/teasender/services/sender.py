@@ -9,9 +9,10 @@ Behaviour on trouble is conservative by design:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from teasender.config import Settings
@@ -49,8 +50,30 @@ class Sender:
         self._notifier = notifier
         self._last_send_at: datetime | None = None
 
+    async def _cancel_stale(self) -> None:
+        """Never send posts left over from previous days (a forgotten start must
+        not dump yesterday's queue). Cancel anything scheduled before today."""
+        tz = ZoneInfo(self._settings.timezone)
+        now_local = utcnow().astimezone(tz)
+        day_start = datetime.combine(
+            now_local.date(), time(0, 0), tzinfo=tz
+        ).astimezone(timezone.utc)
+        async with self._sm() as s:
+            res = await s.execute(
+                update(Publication)
+                .where(
+                    Publication.status == PublicationStatus.planned,
+                    Publication.scheduled_at < day_start,
+                )
+                .values(status=PublicationStatus.cancelled)
+            )
+            await s.commit()
+            if res.rowcount:
+                log.info("cancelled %d stale (pre-today) publications", res.rowcount)
+
     async def run_due_once(self) -> None:
         """Send every publication that is due now, one at a time."""
+        await self._cancel_stale()
         if not await self._account_ready():
             async with self._sm() as s:
                 acc = await s.scalar(select(Account).limit(1))
