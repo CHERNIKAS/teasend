@@ -36,9 +36,11 @@ class BackgroundRunner:
         await self._sender.run_due_once()
 
     def start(self) -> None:
+        # NB: do NOT pass next_run_time=None here — APScheduler treats that as
+        # "paused" and the job never fires on its interval.
         self._scheduler.add_job(
             self._plan, "interval", minutes=30, id="plan",
-            max_instances=1, coalesce=True, next_run_time=None,
+            max_instances=1, coalesce=True,
         )
         self._scheduler.add_job(
             self._send, "interval", seconds=60, id="send",
