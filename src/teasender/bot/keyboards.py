@@ -28,7 +28,6 @@ def main_menu_reply() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_PAUSE), KeyboardButton(text=BTN_HIDE)],
         ],
         resize_keyboard=True,
-        is_persistent=True,
         input_field_placeholder="Выберите раздел…",
     )
 
