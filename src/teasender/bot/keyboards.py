@@ -88,11 +88,14 @@ def chats_list_kb(
 ) -> InlineKeyboardMarkup:
     kb: list[list[InlineKeyboardButton]] = list(_filter_rows(filt))
 
+    # In the log-derived views show that view's own tag, not the generic status.
+    filt_tag = {"restricted": "🚫 ограничили", "deleted": "🗑 удаляли"}.get(filt)
     for c in chats:
+        tag = filt_tag or perm_label(c.permission)
         kb.append(
             [
                 InlineKeyboardButton(
-                    text=f"{'📤' if c.is_enabled else '📵'} {perm_label(c.permission)} · {c.title[:26]}",
+                    text=f"{'📤' if c.is_enabled else '📵'} {tag} · {c.title[:26]}",
                     callback_data=f"chat:{c.id}:{filt}:{page}",
                 )
             ]
