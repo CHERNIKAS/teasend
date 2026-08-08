@@ -16,6 +16,7 @@ from teasender.services.settings_store import (
     get_setting,
     set_setting,
 )
+from teasender.services.spintax import spin
 
 router = Router(name="templates")
 
@@ -42,8 +43,10 @@ def _payload(mode: str, caption: str, rows: list[Template]):
         text = (
             "🧩 <b>Режим: ПУЛ фото</b>\n"
             "Бот берёт 2–4 случайных фото из канала-источника и шлёт альбом.\n\n"
-            f"Подпись: {cap}\n"
-            "<i>Сменить подпись:</i> <code>/caption текст</code>"
+            f"Подпись (спинтакс): {cap}\n\n"
+            "<i>Спинтакс:</i> в фигурных скобках варианты через <code>|</code> — "
+            "при каждой отправке подставляется случайный.\n"
+            "<i>Задать:</i> <code>/caption {Привет|Хай}, чай в продаже 🍵 {пишите в лс|заказ в личку}</code>"
         )
         kb = [[mode_btn], [_SOURCE_BTN]]
         return text, InlineKeyboardMarkup(inline_keyboard=kb)
@@ -99,10 +102,11 @@ async def on_set_caption(message: Message, sessionmaker) -> None:
         await set_setting(s, CAPTION, text)
         await s.commit()
     shown = html.escape(text) if text else "— (пусто)"
-    await ui.open_panel(
-        message.bot, message.chat.id,
-        f"✅ Подпись для режима «Пул» обновлена:\n{shown}",
-    )
+    examples = "\n".join(f"• {html.escape(spin(text))}" for _ in range(3)) if text else ""
+    body = f"✅ Подпись обновлена:\n<code>{shown}</code>"
+    if examples:
+        body += f"\n\n<b>Примеры того, что уйдёт:</b>\n{examples}"
+    await ui.open_panel(message.bot, message.chat.id, body)
 
 
 @router.callback_query(F.data.startswith("tpl:"))

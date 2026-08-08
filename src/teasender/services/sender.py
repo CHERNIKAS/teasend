@@ -20,6 +20,7 @@ from teasender.core.enums import AccountState, Permission, PublicationStatus
 from teasender.db.models import Account, Chat, Publication, Template, as_utc, utcnow
 from teasender.services.notify import Notifier
 from teasender.services.settings_store import CAPTION, SOURCE, as_channel, get_setting
+from teasender.services.spintax import spin
 
 log = logging.getLogger("teasender.sender")
 
@@ -186,9 +187,9 @@ class Sender:
             if is_pool:
                 async with self._sm() as s:
                     source = await get_setting(s, SOURCE, self._settings.drafts_channel)
-                    caption = await get_setting(s, CAPTION, "") or ""
+                    caption_tpl = await get_setting(s, CAPTION, "") or ""
                 msg_id = await self._tg.send_pool_album(
-                    chat.tg_chat_id, as_channel(source), caption
+                    chat.tg_chat_id, as_channel(source), spin(caption_tpl)
                 )
             else:
                 msg_id = await self._tg.copy_to(
