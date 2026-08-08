@@ -113,10 +113,20 @@ class Template(Base):
 # --- Categories ----------------------------------------------------------------
 
 class Category(Base):
+    """A named campaign: its own posting schedule, its own templates, its own
+    set of chats. The planner schedules each active category independently."""
+
     __tablename__ = "categories"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(80), unique=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Per-category schedule (mirrors the per-chat rules).
+    posts_per_day: Mapped[int] = mapped_column(Integer, default=1)
+    window_start: Mapped[time] = mapped_column(Time, default=time(7, 0))
+    window_end: Mapped[time] = mapped_column(Time, default=time(0, 0))
+    days_mask: Mapped[int] = mapped_column(Integer, default=0b1111111)
 
     chats: Mapped[list["Chat"]] = relationship(
         secondary="chat_categories", back_populates="categories"
@@ -210,6 +220,10 @@ class Publication(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     chat_id: Mapped[int] = mapped_column(ForeignKey("chats.id", ondelete="CASCADE"))
     template_id: Mapped[int] = mapped_column(ForeignKey("templates.id", ondelete="CASCADE"))
+    # Which category (campaign) planned this post; NULL = per-chat fallback.
+    category_id: Mapped[int | None] = mapped_column(
+        ForeignKey("categories.id", ondelete="SET NULL"), nullable=True
+    )
     scheduled_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), index=True
     )
