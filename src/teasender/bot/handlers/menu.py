@@ -9,9 +9,11 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy import func, select
 
 from teasender.bot import ui
+from teasender.bot.handlers.categories import render_categories_message
 from teasender.bot.handlers.chats import render_chats_message
 from teasender.bot.handlers.templates import render_templates_message
 from teasender.bot.keyboards import (
+    BTN_CATEGORIES,
     BTN_CHATS,
     BTN_PAUSE,
     BTN_STATUS,
@@ -134,6 +136,11 @@ async def on_chats_msg(message: Message, sessionmaker) -> None:
 @router.message(F.text == BTN_TEMPLATES)
 async def on_templates_msg(message: Message, sessionmaker) -> None:
     await render_templates_message(message, sessionmaker)
+
+
+@router.message(F.text == BTN_CATEGORIES)
+async def on_categories_msg(message: Message, sessionmaker) -> None:
+    await render_categories_message(message, sessionmaker)
 
 
 @router.callback_query(F.data == "noop")

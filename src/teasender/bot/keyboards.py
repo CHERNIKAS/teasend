@@ -17,14 +17,15 @@ BTN_CHATS = "💬 Чаты"
 BTN_TEMPLATES = "📝 Шаблоны"
 BTN_SYNC = "🔄 Синхронизация"
 BTN_PAUSE = "⏯ Пауза / Пуск"
+BTN_CATEGORIES = "🗂 Категории"
 
 
 def main_menu_reply() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_STATUS), KeyboardButton(text=BTN_CHATS)],
-            [KeyboardButton(text=BTN_TEMPLATES), KeyboardButton(text=BTN_SYNC)],
-            [KeyboardButton(text=BTN_PAUSE)],
+            [KeyboardButton(text=BTN_TEMPLATES), KeyboardButton(text=BTN_CATEGORIES)],
+            [KeyboardButton(text=BTN_SYNC), KeyboardButton(text=BTN_PAUSE)],
         ],
         resize_keyboard=True,
         is_persistent=True,
