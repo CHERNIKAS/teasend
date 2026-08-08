@@ -5,7 +5,13 @@ import html
 
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    CallbackQuery,
+    ForceReply,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from sqlalchemy import select
 
 from teasender.bot import ui
@@ -48,7 +54,11 @@ def _payload(mode: str, caption: str, rows: list[Template]):
             "при каждой отправке подставляется случайный.\n"
             "<i>Задать:</i> <code>/caption {Привет|Хай}, чай в продаже 🍵 {пишите в лс|заказ в личку}</code>"
         )
-        kb = [[mode_btn], [_SOURCE_BTN]]
+        kb = [
+            [mode_btn],
+            [InlineKeyboardButton(text="✍️ Изменить подпись", callback_data="setcap")],
+            [_SOURCE_BTN],
+        ]
         return text, InlineKeyboardMarkup(inline_keyboard=kb)
 
     # templates mode
@@ -94,10 +104,10 @@ async def on_toggle_mode(cq: CallbackQuery, sessionmaker) -> None:
     await cq.answer("Режим: ПУЛ фото" if new == _MODE_POOL else "Режим: Шаблоны")
 
 
-@router.message(Command("caption"))
-async def on_set_caption(message: Message, sessionmaker) -> None:
-    await ui.delete_safe(message.bot, message.chat.id, message.message_id)
-    text = (message.text or "")[len("/caption"):].strip()
+_CAP_PROMPT = "✍️ Пришли новую подпись (спинтакс) ответом на это сообщение."
+
+
+async def _save_caption(message: Message, sessionmaker, text: str) -> None:
     async with sessionmaker() as s:
         await set_setting(s, CAPTION, text)
         await s.commit()
@@ -107,6 +117,31 @@ async def on_set_caption(message: Message, sessionmaker) -> None:
     if examples:
         body += f"\n\n<b>Примеры того, что уйдёт:</b>\n{examples}"
     await ui.open_panel(message.bot, message.chat.id, body)
+
+
+@router.callback_query(F.data == "setcap")
+async def on_setcap(cq: CallbackQuery) -> None:
+    await cq.message.answer(
+        _CAP_PROMPT,
+        reply_markup=ForceReply(input_field_placeholder="{Привет|Хай}, чай в продаже 🍵 {в лс|в личку}"),
+    )
+    await cq.answer()
+
+
+@router.message(F.reply_to_message.func(lambda m: m and (m.text or "").startswith(_CAP_PROMPT[:20])))
+async def on_caption_reply(message: Message, sessionmaker) -> None:
+    text = (message.text or "").strip()
+    await ui.delete_safe(message.bot, message.chat.id, message.message_id)
+    if message.reply_to_message:
+        await ui.delete_safe(message.bot, message.chat.id, message.reply_to_message.message_id)
+    await _save_caption(message, sessionmaker, text)
+
+
+@router.message(Command("caption"))
+async def on_set_caption(message: Message, sessionmaker) -> None:
+    await ui.delete_safe(message.bot, message.chat.id, message.message_id)
+    text = (message.text or "")[len("/caption"):].strip()
+    await _save_caption(message, sessionmaker, text)
 
 
 @router.callback_query(F.data.startswith("tpl:"))

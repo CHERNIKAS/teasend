@@ -26,6 +26,7 @@ from teasender.core.enums import AccountState, Permission, PublicationStatus
 from teasender.db.models import Account, Chat, Publication, Setting, Template, as_utc, utcnow
 from teasender.services import chats as chats_svc
 from teasender.services import templates as tpl_svc
+from teasender.services.settings_store import CAPTION, POST_MODE, get_setting
 
 router = Router(name="menu")
 
@@ -71,6 +72,8 @@ async def _build_status(sessionmaker, settings: Settings) -> str:
             select(func.min(Publication.scheduled_at))
             .where(Publication.status == PublicationStatus.planned)
         )
+        post_mode = await get_setting(s, POST_MODE, "templates")
+        caption = await get_setting(s, CAPTION, "") or ""
 
     state = acc.state if acc else None
     state_txt = {
@@ -91,8 +94,8 @@ async def _build_status(sessionmaker, settings: Settings) -> str:
     warn = ""
     if eligible_chats == 0:
         warn = "\n\n⚠️ <b>Нет чатов с включённой отправкой</b> — рассылка не пойдёт. Откройте «Чаты» → карточка → «📤 Разрешить отправку»."
-    elif active_tpl == 0:
-        warn = "\n\n⚠️ <b>Нет активных шаблонов</b> — нечего рассылать. Добавьте посты в канал-черновик и нажмите «Синхронизация»."
+    elif post_mode != "pool" and active_tpl == 0:
+        warn = "\n\n⚠️ <b>Нет активных шаблонов</b> — нечего рассылать. Добавьте посты в канал-источник и нажмите «Синхронизация»."
 
     return (
         f"📊 <b>Статус</b>\n"
@@ -100,7 +103,7 @@ async def _build_status(sessionmaker, settings: Settings) -> str:
         f"Аккаунт: {state_txt}\n"
         f"\n"
         f"📤 Рассылка включена в: <b>{eligible_chats}</b> чатах (всего {enabled_chats})\n"
-        f"📝 Активных шаблонов: <b>{active_tpl}</b>\n"
+        f"{'🧩 Режим: ПУЛ фото ' + ('(подпись задана)' if caption else '(без подписи)') if post_mode == 'pool' else f'📄 Режим: Шаблоны · активных: {active_tpl}'}\n"
         f"\n"
         f"🗓 Запланировано: {planned}\n"
         f"➡️ Ближайшая отправка: {next_txt}\n"
