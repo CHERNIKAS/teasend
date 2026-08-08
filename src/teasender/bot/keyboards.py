@@ -56,6 +56,7 @@ _FILTERS = [
 ]
 _FILTERS2 = [
     ("deleted", "🗑 Удаляли"),
+    ("restricted", "🚫 Ограничили"),
 ]
 
 _PERM_LABEL = {

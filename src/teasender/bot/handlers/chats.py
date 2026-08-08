@@ -13,7 +13,7 @@ from datetime import time
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -24,8 +24,8 @@ from teasender.bot.keyboards import (
     chats_list_kb,
     perm_label,
 )
-from teasender.core.enums import Permission
-from teasender.db.models import Chat, ChatTemplate, LogEntry, Template
+from teasender.core.enums import Permission, PublicationStatus
+from teasender.db.models import Chat, ChatTemplate, LogEntry, Publication, Template
 
 router = Router(name="chats")
 
@@ -51,6 +51,7 @@ _FILTER_LABELS = {
     "denied": "⛔ Запрещённые",
     "all": "Все",
     "deleted": "🗑 Удаляли посты",
+    "restricted": "🚫 Ограничили отправку",
 }
 
 
@@ -69,6 +70,19 @@ def _filter_clause(filt: str):
         return Chat.id.in_(
             select(LogEntry.chat_id).where(
                 LogEntry.event == "post_deleted", LogEntry.chat_id.is_not(None)
+            )
+        )
+    if filt == "restricted":
+        # Chats that rejected our send (banned / write-forbidden / media-forbidden).
+        return Chat.id.in_(
+            select(Publication.chat_id).where(
+                Publication.status == PublicationStatus.failed,
+                or_(
+                    Publication.error.like("%Forbidden%"),
+                    Publication.error.like("%Banned%"),
+                    Publication.error.like("%Restricted%"),
+                    Publication.error.like("%AdminRequired%"),
+                ),
             )
         )
     return None  # "all"
@@ -103,6 +117,7 @@ async def _list_text(sessionmaker, filt: str) -> str:
         "denied": "⛔ Запрещённые",
         "all": "Все",
         "deleted": "🗑 Удаляли посты",
+        "restricted": "🚫 Ограничили отправку",
     }.get(filt, "Чаты")
     return f"💬 <b>Чаты</b> · {label} ({total})"
 
