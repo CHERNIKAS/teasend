@@ -189,7 +189,9 @@ class Chat(Base):
     )
     permission_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # "Отправка" gate: off by default so a freshly imported chat never posts
+    # until you explicitly enable it.
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Per-chat rules (the heart of "different schedule per chat").
     posts_per_day: Mapped[int] = mapped_column(Integer, default=1)

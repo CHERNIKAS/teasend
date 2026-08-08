@@ -27,7 +27,7 @@ async def _seed_template(s):
 def _chat(**kw) -> Chat:
     base = dict(
         tg_chat_id=kw.pop("tg"), title=kw.pop("title", "c"),
-        permission=Permission.allowed, is_enabled=True,
+        permission=Permission.allowed, is_enabled=kw.pop("is_enabled", True),
         posts_per_day=2, min_interval_minutes=60,
         window_start=time(0, 0), window_end=time(23, 59), days_mask=0b1111111,
     )
@@ -36,14 +36,15 @@ def _chat(**kw) -> Chat:
 
 
 @pytest.mark.asyncio
-async def test_permission_gate_and_quota(sessionmaker):
+async def test_send_gate_and_quota(sessionmaker):
+    # The send gate is is_enabled ("отправка"), independent of the permission label.
     async with sessionmaker() as s:
         await _seed_template(s)
         s.add_all([
-            _chat(tg=-1, title="allowed", permission=Permission.allowed, posts_per_day=2),
-            _chat(tg=-2, title="unknown", permission=Permission.unknown),
-            _chat(tg=-3, title="denied", permission=Permission.denied),
-            _chat(tg=-4, title="disabled", permission=Permission.allowed, is_enabled=False),
+            _chat(tg=-1, title="on", is_enabled=True, posts_per_day=2),
+            _chat(tg=-2, title="off", is_enabled=False, posts_per_day=2),
+            # Denied label but sending explicitly enabled -> still broadcasts.
+            _chat(tg=-3, title="denied_on", permission=Permission.denied, is_enabled=True, posts_per_day=2),
         ])
         await s.commit()
 
@@ -57,9 +58,9 @@ async def test_permission_gate_and_quota(sessionmaker):
             .group_by(Chat.title)
         )).all()
 
-    assert n == 2  # only the allowed chat, 2 posts/day
-    assert total == 2
-    assert dict(by_chat) == {"allowed": 2}
+    assert n == 4  # two enabled chats, 2 posts each
+    assert total == 4
+    assert dict(by_chat) == {"on": 2, "denied_on": 2}
 
 
 @pytest.mark.asyncio

@@ -197,9 +197,8 @@ class Sender:
         await self._notifier.send(f"✅ Доставлено в «{chat.title}»")
 
     def _rule_ok(self, chat: Chat) -> bool:
-        # Spacing is decided at planning time (random slots across the window);
-        # here we only re-check the permission gate in case it changed.
-        return chat.is_enabled and chat.permission in _ELIGIBLE
+        # The "отправка" flag is the single gate; spacing is decided at planning.
+        return chat.is_enabled
 
     async def _respect_global_interval(self) -> None:
         import asyncio

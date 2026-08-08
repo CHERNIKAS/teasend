@@ -17,15 +17,15 @@ BTN_CHATS = "💬 Чаты"
 BTN_TEMPLATES = "📝 Шаблоны"
 BTN_SYNC = "🔄 Синхронизация"
 BTN_PAUSE = "⏯ Пауза / Пуск"
-BTN_CATEGORIES = "🗂 Категории"
+BTN_HIDE = "⌨️ Свернуть меню"
 
 
 def main_menu_reply() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_STATUS), KeyboardButton(text=BTN_CHATS)],
-            [KeyboardButton(text=BTN_TEMPLATES), KeyboardButton(text=BTN_CATEGORIES)],
-            [KeyboardButton(text=BTN_SYNC), KeyboardButton(text=BTN_PAUSE)],
+            [KeyboardButton(text=BTN_TEMPLATES), KeyboardButton(text=BTN_SYNC)],
+            [KeyboardButton(text=BTN_PAUSE), KeyboardButton(text=BTN_HIDE)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -92,7 +92,7 @@ def chats_list_kb(
         kb.append(
             [
                 InlineKeyboardButton(
-                    text=f"{perm_label(c.permission)} · {c.title[:30]}",
+                    text=f"{'📤' if c.is_enabled else '📵'} {perm_label(c.permission)} · {c.title[:26]}",
                     callback_data=f"chat:{c.id}:{filt}:{page}",
                 )
             ]
@@ -143,8 +143,14 @@ def chat_detail_kb(
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="✅ Разрешить", callback_data=f"perm:{cid}:allowed"),
-                InlineKeyboardButton(text="⛔ Запретить", callback_data=f"perm:{cid}:denied"),
+                InlineKeyboardButton(
+                    text="📵 Выключить отправку" if chat.is_enabled else "📤 Разрешить отправку",
+                    callback_data=f"send:{cid}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(text="✅ В разрешённые", callback_data=f"perm:{cid}:allowed"),
+                InlineKeyboardButton(text="⛔ В запрещённые", callback_data=f"perm:{cid}:denied"),
             ],
             [InlineKeyboardButton(text=tpl_label, callback_data=f"ctpl:{cid}")],
             [

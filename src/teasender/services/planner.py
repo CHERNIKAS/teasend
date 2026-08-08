@@ -167,7 +167,7 @@ async def plan_day(session: AsyncSession, tz_name: str, now: datetime | None = N
         cat_templates = [t for t in cat.templates if t.is_active] or active_templates[:1]
         for chat in cat.chats:
             covered_chat_ids.add(chat.id)
-            if not (chat.is_enabled and chat.permission in _ELIGIBLE):
+            if not chat.is_enabled:  # "отправка" toggle is the gate
                 continue
             planned_total += await _schedule_chat(
                 session, chat, cat, cat_templates, cat.id,
@@ -179,7 +179,7 @@ async def plan_day(session: AsyncSession, tz_name: str, now: datetime | None = N
         (
             await session.scalars(
                 select(Chat)
-                .where(Chat.is_enabled.is_(True), Chat.permission.in_(_ELIGIBLE))
+                .where(Chat.is_enabled.is_(True))
                 .options(selectinload(Chat.templates))
             )
         ).all()

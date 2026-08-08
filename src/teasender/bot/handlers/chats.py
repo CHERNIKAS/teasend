@@ -150,10 +150,12 @@ def _detail_text(chat: Chat) -> str:
             tpl_line += f" +{len(tpls) - 3}"
     else:
         tpl_line = "Шаблоны: по умолчанию (первый активный)"
+    send_line = "📤 Отправка: ВКЛ" if chat.is_enabled else "📵 Отправка: выкл"
     return (
         f"<b>{chat.title}</b>\n"
         f"ID: <code>{chat.tg_chat_id}</code>\n"
-        f"Статус: {perm_label(chat.permission)}\n"
+        f"{send_line}\n"
+        f"Метка: {perm_label(chat.permission)}\n"
         f"{tpl_line}\n"
         f"Отправлено/ошибок: {chat.success_count}/{chat.fail_count}"
     )
@@ -209,6 +211,15 @@ async def on_set_perm(cq: CallbackQuery, sessionmaker) -> None:
     _, chat_id, value = cq.data.split(":")
     await _mutate_and_render(cq, sessionmaker, int(chat_id), lambda c: _set_permission(c, value))
     await cq.answer("✅ Разрешён и активен" if value == "allowed" else "⛔ Запрещён")
+
+
+@router.callback_query(F.data.startswith("send:"))
+async def on_toggle_send(cq: CallbackQuery, sessionmaker) -> None:
+    chat_id = int(cq.data.split(":")[1])
+    await _mutate_and_render(
+        cq, sessionmaker, chat_id, lambda c: setattr(c, "is_enabled", not c.is_enabled)
+    )
+    await cq.answer("Готово")
 
 
 @router.callback_query(F.data.startswith("ppd:"))

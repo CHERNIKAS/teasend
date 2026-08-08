@@ -5,16 +5,15 @@ from zoneinfo import ZoneInfo
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 from sqlalchemy import func, select
 
 from teasender.bot import ui
-from teasender.bot.handlers.categories import render_categories_message
 from teasender.bot.handlers.chats import render_chats_message
 from teasender.bot.handlers.templates import render_templates_message
 from teasender.bot.keyboards import (
-    BTN_CATEGORIES,
     BTN_CHATS,
+    BTN_HIDE,
     BTN_PAUSE,
     BTN_STATUS,
     BTN_SYNC,
@@ -61,12 +60,9 @@ async def _build_status(sessionmaker, settings: Settings) -> str:
             .where(Publication.status == PublicationStatus.failed)
         )
         eligible_chats = await s.scalar(
-            select(func.count()).select_from(Chat)
-            .where(Chat.is_enabled.is_(True), Chat.permission.in_(_ELIGIBLE))
-        )
-        enabled_chats = await s.scalar(
             select(func.count()).select_from(Chat).where(Chat.is_enabled.is_(True))
         )
+        enabled_chats = await s.scalar(select(func.count()).select_from(Chat))
         active_tpl = await s.scalar(
             select(func.count()).select_from(Template)
             .where(Template.is_active.is_(True))
@@ -94,7 +90,7 @@ async def _build_status(sessionmaker, settings: Settings) -> str:
 
     warn = ""
     if eligible_chats == 0:
-        warn = "\n\n⚠️ <b>Нет разрешённых чатов</b> — рассылка не пойдёт. Откройте «Чаты» → «Не проверенные» и отметьте нужные ✅."
+        warn = "\n\n⚠️ <b>Нет чатов с включённой отправкой</b> — рассылка не пойдёт. Откройте «Чаты» → карточка → «📤 Разрешить отправку»."
     elif active_tpl == 0:
         warn = "\n\n⚠️ <b>Нет активных шаблонов</b> — нечего рассылать. Добавьте посты в канал-черновик и нажмите «Синхронизация»."
 
@@ -103,7 +99,7 @@ async def _build_status(sessionmaker, settings: Settings) -> str:
         f"Режим: {mode}\n"
         f"Аккаунт: {state_txt}\n"
         f"\n"
-        f"✅ Разрешённых чатов: <b>{eligible_chats}</b> (включено всего: {enabled_chats})\n"
+        f"📤 Рассылка включена в: <b>{eligible_chats}</b> чатах (всего {enabled_chats})\n"
         f"📝 Активных шаблонов: <b>{active_tpl}</b>\n"
         f"\n"
         f"🗓 Запланировано: {planned}\n"
@@ -138,9 +134,10 @@ async def on_templates_msg(message: Message, sessionmaker) -> None:
     await render_templates_message(message, sessionmaker)
 
 
-@router.message(F.text == BTN_CATEGORIES)
-async def on_categories_msg(message: Message, sessionmaker) -> None:
-    await render_categories_message(message, sessionmaker)
+@router.message(F.text == BTN_HIDE)
+async def on_hide(message: Message) -> None:
+    await ui.delete_safe(message.bot, message.chat.id, message.message_id)
+    await message.answer("Меню свёрнуто. /menu — вернуть.", reply_markup=ReplyKeyboardRemove())
 
 
 @router.callback_query(F.data == "noop")
