@@ -27,6 +27,8 @@ from teasender.bot.keyboards import (
 )
 from teasender.core.enums import Permission, PublicationStatus
 from teasender.db.models import Chat, ChatTemplate, LogEntry, Publication, Template
+from teasender.services.settings_store import CAPTION, POST_MODE, SOURCE, as_channel, get_setting
+from teasender.services.spintax import spin
 
 router = Router(name="chats")
 
@@ -374,32 +376,42 @@ async def on_ask_apply(cq: CallbackQuery, sessionmaker) -> None:
 
 
 @router.callback_query(F.data.startswith("testnow:"))
-async def on_test_now(cq: CallbackQuery, sessionmaker, telegram) -> None:
+async def on_test_now(cq: CallbackQuery, sessionmaker, telegram, settings) -> None:
     """Send one post to THIS chat right now, directly — independent of the queue,
-    the account pause state and the daily schedule."""
+    the account pause state and the daily schedule. Respects the current mode
+    (templates copy vs pool assembly)."""
     chat_id = int(cq.data.split(":")[1])
     async with sessionmaker() as s:
         chat = await _get_chat(s, chat_id)
         if chat is None:
             await cq.answer("Чат не найден", show_alert=True)
             return
-        # Pick this chat's template (mix if several); fall back to first active.
-        assigned = [t for t in chat.templates if t.is_active]
-        if not assigned:
-            assigned = list((await s.scalars(
-                select(Template).where(Template.is_active.is_(True)).order_by(Template.id).limit(1)
-            )).all())
-        if not assigned:
-            await cq.answer("Нет активных шаблонов", show_alert=True)
-            return
-        tpl = random.choice(assigned)
         target_tg_id = chat.tg_chat_id
-        src = (tpl.source_channel_id, tpl.source_message_id, tpl.grouped_id)
+        mode = await get_setting(s, POST_MODE, "templates")
+        pool = mode == "pool"
+        if pool:
+            source = await get_setting(s, SOURCE, settings.drafts_channel)
+            caption = await get_setting(s, CAPTION, "") or ""
+            src = None
+        else:
+            assigned = [t for t in chat.templates if t.is_active]
+            if not assigned:
+                assigned = list((await s.scalars(
+                    select(Template).where(Template.is_active.is_(True)).order_by(Template.id).limit(1)
+                )).all())
+            if not assigned:
+                await cq.answer("Нет активных шаблонов", show_alert=True)
+                return
+            tpl = random.choice(assigned)
+            src = (tpl.source_channel_id, tpl.source_message_id, tpl.grouped_id)
 
     ok = True
     err = ""
     try:
-        await telegram.copy_to(target_tg_id, *src)
+        if pool:
+            await telegram.send_pool_album(target_tg_id, as_channel(source), spin(caption))
+        else:
+            await telegram.copy_to(target_tg_id, *src)
     except Exception as exc:  # noqa: BLE001
         ok, err = False, type(exc).__name__
     # Return to the chat card either way.
