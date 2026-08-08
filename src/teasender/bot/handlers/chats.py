@@ -8,6 +8,7 @@ as a power-user shortcut:
 """
 from __future__ import annotations
 
+import html
 import random
 from datetime import time
 
@@ -152,7 +153,7 @@ def _detail_text(chat: Chat) -> str:
         tpl_line = "Шаблоны: по умолчанию (первый активный)"
     send_line = "📤 Отправка: ВКЛ" if chat.is_enabled else "📵 Отправка: выкл"
     return (
-        f"<b>{chat.title}</b>\n"
+        f"<code>{html.escape(chat.title)}</code>\n"
         f"ID: <code>{chat.tg_chat_id}</code>\n"
         f"{send_line}\n"
         f"Метка: {perm_label(chat.permission)}\n"
