@@ -7,6 +7,7 @@ survive because Telethon's send_file accepts a media list.
 """
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 
 from telethon import TelegramClient
@@ -113,6 +114,40 @@ class TelegramService:
         msgs = await self._client.get_messages(entity, ids=ids)
         group = [m for m in msgs if m is not None and m.grouped_id == grouped_id]
         return entity, group or [await self._client.get_messages(entity, ids=message_id)]
+
+    async def send_pool_album(
+        self,
+        target_tg_id: int,
+        pool_channel: str | int,
+        caption: str,
+        min_photos: int = 2,
+        max_photos: int = 4,
+    ) -> int:
+        """Assemble a fresh album from random photos in the pool channel.
+
+        Reads the pool channel, picks between min_photos and max_photos random
+        photos, and posts them as one album with `caption`. Different subset each
+        time — that's the per-send uniqueness."""
+        entity = await self._client.get_entity(pool_channel)
+        photos = [
+            m async for m in self._client.iter_messages(entity, limit=200)
+            if m.photo is not None
+        ]
+        if not photos:
+            raise ValueError("photo pool is empty")
+
+        k = min(random.randint(min_photos, max_photos), len(photos))
+        chosen = random.sample(photos, k)
+        target = await self._client.get_input_entity(target_tg_id)
+
+        if k == 1:
+            sent = await self._client.send_file(target, chosen[0].media, caption=caption or "")
+            return sent.id
+        media = [m.media for m in chosen]
+        captions = [caption or ""] + [""] * (k - 1)  # caption on the first photo
+        sent = await self._client.send_file(target, media, caption=captions)
+        first = sent[0] if isinstance(sent, list) else sent
+        return first.id
 
     async def copy_to(
         self, target_tg_id: int, channel_id: int, message_id: int, grouped_id: int | None

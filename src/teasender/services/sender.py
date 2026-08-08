@@ -19,6 +19,7 @@ from teasender.config import Settings
 from teasender.core.enums import AccountState, Permission, PublicationStatus
 from teasender.db.models import Account, Chat, Publication, Template, as_utc, utcnow
 from teasender.services.notify import Notifier
+from teasender.services.settings_store import CAPTION, SOURCE, as_channel, get_setting
 
 log = logging.getLogger("teasender.sender")
 
@@ -159,11 +160,12 @@ class Sender:
     # --- processing one publication --------------------------------------------
 
     async def _process(self, pub: Publication) -> None:
+        is_pool = pub.template_id is None
         async with self._sm() as s:
             chat = await s.get(Chat, pub.chat_id)
-            template = await s.get(Template, pub.template_id)
+            template = None if is_pool else await s.get(Template, pub.template_id)
 
-        if chat is None or template is None:
+        if chat is None or (not is_pool and template is None):
             log.warning("pub %s: chat/template missing -> failed", pub.id)
             await self._finish(pub.id, PublicationStatus.failed, error="chat/template missing")
             return
@@ -175,17 +177,26 @@ class Sender:
         await self._respect_global_interval()
 
         if self._settings.dry_run:
-            log.info("[DRY_RUN] would post template %s -> chat %s", template.id, chat.title)
+            log.info("[DRY_RUN] would post (%s) -> chat %s",
+                     "pool" if is_pool else f"tpl {template.id}", chat.title)
             await self._finish(pub.id, PublicationStatus.skipped, error="dry-run")
             return
 
         try:
-            msg_id = await self._tg.copy_to(
-                chat.tg_chat_id,
-                template.source_channel_id,
-                template.source_message_id,
-                template.grouped_id,
-            )
+            if is_pool:
+                async with self._sm() as s:
+                    source = await get_setting(s, SOURCE, self._settings.drafts_channel)
+                    caption = await get_setting(s, CAPTION, "") or ""
+                msg_id = await self._tg.send_pool_album(
+                    chat.tg_chat_id, as_channel(source), caption
+                )
+            else:
+                msg_id = await self._tg.copy_to(
+                    chat.tg_chat_id,
+                    template.source_channel_id,
+                    template.source_message_id,
+                    template.grouped_id,
+                )
         except Exception as exc:  # noqa: BLE001 - classified below
             await self._handle_send_error(pub.id, chat, exc)
             return

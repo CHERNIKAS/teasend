@@ -221,7 +221,10 @@ class Publication(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     chat_id: Mapped[int] = mapped_column(ForeignKey("chats.id", ondelete="CASCADE"))
-    template_id: Mapped[int] = mapped_column(ForeignKey("templates.id", ondelete="CASCADE"))
+    # NULL = a "pool" post assembled at send time (random photos + caption).
+    template_id: Mapped[int | None] = mapped_column(
+        ForeignKey("templates.id", ondelete="CASCADE"), nullable=True
+    )
     # Which category (campaign) planned this post; NULL = per-chat fallback.
     category_id: Mapped[int | None] = mapped_column(
         ForeignKey("categories.id", ondelete="SET NULL"), nullable=True

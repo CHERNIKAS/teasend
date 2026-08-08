@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 
 from teasender.core.enums import Permission, PublicationStatus
 from teasender.db.models import Category, Chat, Publication, Template, as_utc
+from teasender.services.settings_store import POST_MODE, get_setting
 
 _ELIGIBLE = (Permission.allowed, Permission.owner)
 _ACTIVE_STATUSES = (
@@ -69,13 +70,17 @@ async def _schedule_chat(
     now_local: datetime,
     day_start_utc: datetime,
     day_end_utc: datetime,
+    pool: bool = False,
 ) -> int:
     """Top up one chat's daily quota for a given schedule source. Quota is
-    counted per (chat, category) so a chat in several campaigns gets each one."""
+    counted per (chat, category) so a chat in several campaigns gets each one.
+
+    In pool mode the publication carries no template (template_id NULL); the post
+    is assembled from the photo pool at send time."""
     weekday = now_local.weekday()
     if not (sched.days_mask & (1 << weekday)):
         return 0
-    if not templates:
+    if not pool and not templates:
         return 0
 
     cat_clause = (
@@ -112,7 +117,7 @@ async def _schedule_chat(
         session.add(
             Publication(
                 chat_id=chat.id,
-                template_id=random.choice(templates).id,
+                template_id=None if pool else random.choice(templates).id,
                 category_id=category_id,
                 scheduled_at=slot_utc,
                 status=PublicationStatus.planned,
@@ -139,6 +144,24 @@ async def plan_day(session: AsyncSession, tz_name: str, now: datetime | None = N
         .values(status=PublicationStatus.cancelled)
     )
     await session.commit()
+
+    pool_mode = (await get_setting(session, POST_MODE, "templates")) == "pool"
+
+    # --- Pool mode: schedule every enabled chat; post assembled at send time ---
+    if pool_mode:
+        planned_total = 0
+        chats = list(
+            (await session.scalars(
+                select(Chat).where(Chat.is_enabled.is_(True))
+            )).all()
+        )
+        for chat in chats:
+            planned_total += await _schedule_chat(
+                session, chat, chat, [], None,
+                today, tz, now_local, day_start_utc, day_end_utc, pool=True,
+            )
+        await session.commit()
+        return planned_total
 
     active_templates = list(
         (
