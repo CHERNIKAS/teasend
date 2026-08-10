@@ -1,6 +1,7 @@
 """Start menu, status, account pause/resume, and drafts/chats sync."""
 from __future__ import annotations
 
+from datetime import timedelta
 from zoneinfo import ZoneInfo
 
 from aiogram import F, Router
@@ -24,10 +25,29 @@ from teasender.bot.keyboards import (
 )
 from teasender.config import Settings
 from teasender.core.enums import AccountState, Permission, PublicationStatus
-from teasender.db.models import Account, Chat, Publication, Setting, Template, as_utc, utcnow
+from teasender.db.models import (
+    Account,
+    Chat,
+    JoinQueue,
+    Publication,
+    Setting,
+    Template,
+    as_utc,
+    utcnow,
+)
 from teasender.services import chats as chats_svc
 from teasender.services import templates as tpl_svc
-from teasender.services.settings_store import CAPTION, POST_MODE, get_setting
+from teasender.services.settings_store import (
+    CAPTION,
+    JOIN_CAP,
+    KEYWORDS,
+    POST_MODE,
+    SMART_CAP,
+    SMART_MODE,
+    SMART_SHARE,
+    SMART_WINDOW,
+    get_setting,
+)
 
 router = Router(name="menu")
 
@@ -73,8 +93,35 @@ async def _build_status(sessionmaker, settings: Settings) -> str:
             select(func.min(Publication.scheduled_at))
             .where(Publication.status == PublicationStatus.planned)
         )
+        # Chats breakdown by permission label.
+        perm_rows = dict((await s.execute(
+            select(Chat.permission, func.count()).group_by(Chat.permission)
+        )).all())
+        allowed_n = perm_rows.get(Permission.allowed, 0) + perm_rows.get(Permission.owner, 0)
+        denied_n = perm_rows.get(Permission.denied, 0)
+        unknown_n = perm_rows.get(Permission.unknown, 0)
+        # Join queue.
+        queue_n = await s.scalar(
+            select(func.count()).select_from(JoinQueue).where(JoinQueue.status == "pending")
+        )
+        since = utcnow() - timedelta(hours=24)
+        joined_24 = await s.scalar(
+            select(func.count()).select_from(JoinQueue)
+            .where(JoinQueue.status == "joined", JoinQueue.joined_at >= since)
+        )
+        joined_total = await s.scalar(
+            select(func.count()).select_from(JoinQueue).where(JoinQueue.status == "joined")
+        )
+        # Settings.
         post_mode = await get_setting(s, POST_MODE, "templates")
         caption = await get_setting(s, CAPTION, "") or ""
+        join_cap = await get_setting(s, JOIN_CAP, "5")
+        keywords = await get_setting(s, KEYWORDS, "") or ""
+        kw_n = len([w for w in keywords.replace("\n", ",").split(",") if w.strip()])
+        smart_on = (await get_setting(s, SMART_MODE, "off")) == "on"
+        smart_share = await get_setting(s, SMART_SHARE, "7")
+        smart_cap = await get_setting(s, SMART_CAP, "2")
+        smart_win = await get_setting(s, SMART_WINDOW, "9-22")
 
     state = acc.state if acc else None
     state_txt = {
@@ -98,18 +145,30 @@ async def _build_status(sessionmaker, settings: Settings) -> str:
     elif post_mode != "pool" and active_tpl == 0:
         warn = "\n\n⚠️ <b>Нет активных шаблонов</b> — нечего рассылать. Добавьте посты в канал-источник и нажмите «Синхронизация»."
 
+    content = (
+        "🧩 ПУЛ фото " + ("(подпись задана)" if caption else "(без подписи)")
+        if post_mode == "pool" else f"📄 Шаблоны · активных: {active_tpl}"
+    )
+    smart_txt = (
+        f"🟢 ВКЛ · доля {smart_share}%, потолок {smart_cap}/д, окно {smart_win}"
+        if smart_on else "⚪️ выкл (графики вручную)"
+    )
+    kw_txt = f"{kw_n} слов" if kw_n else "выкл"
+
     return (
         f"📊 <b>Статус</b>\n"
-        f"Режим: {mode}\n"
-        f"Аккаунт: {state_txt}\n"
+        f"Режим: {mode} · Аккаунт: {state_txt}\n"
         f"\n"
-        f"📤 Рассылка включена в: <b>{eligible_chats}</b> чатах (всего {enabled_chats})\n"
-        f"{'🧩 Режим: ПУЛ фото ' + ('(подпись задана)' if caption else '(без подписи)') if post_mode == 'pool' else f'📄 Режим: Шаблоны · активных: {active_tpl}'}\n"
+        f"💬 <b>Чаты:</b> всего {enabled_chats}\n"
+        f"  📤 рассылка вкл: <b>{eligible_chats}</b> · ✅ {allowed_n} · ⛔ {denied_n} · ❔ {unknown_n}\n"
+        f"📝 <b>Контент:</b> {content}\n"
+        f"🧠 <b>Умная рассылка:</b> {smart_txt}\n"
         f"\n"
-        f"🗓 Запланировано: {planned}\n"
-        f"➡️ Ближайшая отправка: {next_txt}\n"
-        f"✔️ Отправлено: {sent}\n"
-        f"❌ Ошибок: {failed}"
+        f"📥 <b>Вступление:</b> в очереди {queue_n}, за сутки {joined_24}/{join_cap} (всего {joined_total})\n"
+        f"🔎 <b>Мониторинг:</b> {kw_txt}\n"
+        f"\n"
+        f"🗓 Запланировано: {planned} · ➡️ ближайшая: {next_txt}\n"
+        f"✔️ Отправлено: {sent} · ❌ Ошибок: {failed}"
         f"{warn}"
     )
 
