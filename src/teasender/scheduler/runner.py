@@ -14,6 +14,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from teasender.config import Settings
 from teasender.db.session import get_sessionmaker
+from teasender.services.joiner import process_join
 from teasender.services.planner import plan_day
 from teasender.services.sender import Sender
 
@@ -21,9 +22,11 @@ log = logging.getLogger("teasender.scheduler")
 
 
 class BackgroundRunner:
-    def __init__(self, settings: Settings, sender: Sender) -> None:
+    def __init__(self, settings: Settings, sender: Sender, telegram=None, notifier=None) -> None:
         self._settings = settings
         self._sender = sender
+        self._telegram = telegram
+        self._notifier = notifier
         self._scheduler = AsyncIOScheduler(timezone=settings.timezone)
 
     async def _plan(self) -> None:
@@ -35,6 +38,11 @@ class BackgroundRunner:
     async def _send(self) -> None:
         await self._sender.run_due_once()
 
+    async def _join(self) -> None:
+        if self._telegram is None or self._notifier is None:
+            return
+        await process_join(get_sessionmaker(), self._telegram, self._notifier)
+
     def start(self) -> None:
         # NB: do NOT pass next_run_time=None here — APScheduler treats that as
         # "paused" and the job never fires on its interval.
@@ -44,6 +52,10 @@ class BackgroundRunner:
         )
         self._scheduler.add_job(
             self._send, "interval", seconds=60, id="send",
+            max_instances=1, coalesce=True,
+        )
+        self._scheduler.add_job(
+            self._join, "interval", minutes=45, id="join",
             max_instances=1, coalesce=True,
         )
         self._scheduler.start()

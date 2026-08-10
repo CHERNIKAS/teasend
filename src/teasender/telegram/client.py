@@ -115,6 +115,31 @@ class TelegramService:
         group = [m for m in msgs if m is not None and m.grouped_id == grouped_id]
         return entity, group or [await self._client.get_messages(entity, ids=message_id)]
 
+    async def join_ref(self, ref: str) -> str:
+        """Join a chat by @username / public link, or by invite link (+hash).
+        Returns 'joined' or 'requested' (for approval-required chats). Raises on
+        error (FloodWait, already-participant, invalid) for the caller to handle."""
+        from telethon.tl.functions.channels import JoinChannelRequest
+        from telethon.tl.functions.messages import ImportChatInviteRequest
+
+        ref = ref.strip()
+        for marker in ("t.me/+", "t.me/joinchat/", "telegram.me/+", "/joinchat/"):
+            if marker in ref:
+                invite_hash = ref.split(marker)[-1].strip("/")
+                await self._client(ImportChatInviteRequest(invite_hash))
+                return "joined"
+        if ref.startswith("+"):
+            await self._client(ImportChatInviteRequest(ref[1:]))
+            return "joined"
+        uname = (
+            ref.replace("https://", "").replace("http://", "")
+            .replace("t.me/", "").replace("telegram.me/", "")
+            .lstrip("@").strip("/")
+        )
+        entity = await self._client.get_entity(uname)
+        await self._client(JoinChannelRequest(entity))
+        return "joined"
+
     async def _input_entity(self, tg_id: int):
         """Resolve a chat for sending. On a cache miss (Telethon raises
         ValueError), refresh dialogs once and retry — new/uncached chats resolve
