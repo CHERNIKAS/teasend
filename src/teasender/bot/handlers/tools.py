@@ -100,6 +100,10 @@ async def _smart_state(sessionmaker):
 
 def _smart_payload(st: dict):
     on = st["on"]
+    try:
+        win_a, win_b = (int(x) for x in st[SMART_WINDOW].split("-"))
+    except Exception:  # noqa: BLE001
+        win_a, win_b = 9, 22
     text = (
         f"🧠 <b>Умная рассылка: {'🟢 ВКЛ' if on else '⚪️ выкл'}</b>\n"
         "Бот сам подбирает частоту по активности каждого чата — ручные графики не нужны.\n\n"
@@ -127,13 +131,14 @@ def _smart_payload(st: dict):
         row("Пробник, дн", SMART_PROBE_DAYS),
         row("Интервал, ч", SMART_MIN_INT_H),
         [
-            InlineKeyboardButton(text="Старт ➖", callback_data="sm:wins:-1"),
-            InlineKeyboardButton(text=f"Окно {st[SMART_WINDOW]}", callback_data="noop"),
-            InlineKeyboardButton(text="Стоп ➕", callback_data="sm:wine:1"),
+            InlineKeyboardButton(text="➖", callback_data="sm:wins:-1"),
+            InlineKeyboardButton(text=f"Старт: {win_a:02d}:00", callback_data="noop"),
+            InlineKeyboardButton(text="➕", callback_data="sm:wins:1"),
         ],
         [
-            InlineKeyboardButton(text="Старт ➕", callback_data="sm:wins:1"),
-            InlineKeyboardButton(text="Стоп ➖", callback_data="sm:wine:-1"),
+            InlineKeyboardButton(text="➖", callback_data="sm:wine:-1"),
+            InlineKeyboardButton(text=f"Стоп: {win_b:02d}:00", callback_data="noop"),
+            InlineKeyboardButton(text="➕", callback_data="sm:wine:1"),
         ],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="tools")],
     ])
