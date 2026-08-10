@@ -237,6 +237,15 @@ class Sender:
                 await self._pause_flood(3600, "PeerFlood (спам-лимит Telegram)")
             return
 
+        # Account can't even resolve the chat -> it's not a member (kicked/banned).
+        if name == "ValueError" and "input entity" in str(exc).lower():
+            await self._finish(pub_id, PublicationStatus.failed, error=f"{name}: {exc}")
+            await self._deny_chat(chat.id)
+            await self._notifier.send(
+                f"🚫 Нет доступа к «{chat.title}» (аккаунт не участник) — отправка выключена."
+            )
+            return
+
         # Permanent "can't post here" problems: stop hammering the chat, deny it.
         if name in _WRITE_FORBIDDEN:
             await self._finish(pub_id, PublicationStatus.failed, error=f"{name}: {exc}")
