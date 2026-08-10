@@ -10,7 +10,7 @@ import logging
 from sqlalchemy import select
 
 from teasender.core.enums import PublicationStatus
-from teasender.db.models import Chat, Publication
+from teasender.db.models import Chat, Publication, utcnow
 from teasender.services.settings_store import KEYWORDS, get_setting
 
 log = logging.getLogger("teasender.monitor")
@@ -79,6 +79,16 @@ async def handle_incoming(sessionmaker, notifier, event) -> None:
     text = msg.raw_text or ""
     low = text.lower()
     chat_tg = event.chat_id
+
+    # Record chat activity (feeds smart broadcasting).
+    async with sessionmaker() as s:
+        chat_row = await s.scalar(select(Chat).where(Chat.tg_chat_id == chat_tg))
+        if chat_row is not None:
+            chat_row.last_activity_at = utcnow()
+            chat_row.activity_msgs = (chat_row.activity_msgs or 0) + 1
+            if chat_row.activity_window_start is None:
+                chat_row.activity_window_start = utcnow()
+            await s.commit()
 
     reasons: list[str] = []
 

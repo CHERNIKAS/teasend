@@ -21,6 +21,14 @@ from teasender.services import monitor
 from teasender.services.settings_store import (
     JOIN_CAP,
     KEYWORDS,
+    SMART_CAP,
+    SMART_DEAD_DAYS,
+    SMART_DEFAULTS,
+    SMART_MIN_INT_H,
+    SMART_MODE,
+    SMART_PROBE_DAYS,
+    SMART_SHARE,
+    SMART_WINDOW,
     get_setting,
     set_setting,
 )
@@ -56,16 +64,121 @@ def _payload(cap: int, kw: str, pending: int, joined24: int):
         "<i>Бот вступает равномерно, не превышая лимит в день.</i>"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🧠 Умная рассылка", callback_data="smart")],
         [InlineKeyboardButton(text="✍️ Задать слова", callback_data="setkw")],
         [InlineKeyboardButton(text="➕ Добавить чаты в очередь", callback_data="addjoin")],
         [
             InlineKeyboardButton(text="➖", callback_data="jcap:-1"),
-            InlineKeyboardButton(text=f"Лимит/сутки: {cap}", callback_data="noop"),
+            InlineKeyboardButton(text=f"Лимит вступлений/сутки: {cap}", callback_data="noop"),
             InlineKeyboardButton(text="➕", callback_data="jcap:1"),
         ],
         [InlineKeyboardButton(text="🧹 Очистить очередь", callback_data="joinclr")],
     ])
     return text, kb
+
+
+# --- Smart broadcasting settings ---------------------------------------------
+
+_SMART_LIMITS = {
+    SMART_SHARE: (1, 100),
+    SMART_CAP: (0, 20),
+    SMART_DEAD_DAYS: (1, 30),
+    SMART_PROBE_DAYS: (1, 30),
+    SMART_MIN_INT_H: (1, 48),
+}
+
+
+async def _smart_state(sessionmaker):
+    async with sessionmaker() as s:
+        st = {"on": (await get_setting(s, SMART_MODE, "off")) == "on"}
+        for key in (SMART_SHARE, SMART_CAP, SMART_DEAD_DAYS, SMART_PROBE_DAYS, SMART_MIN_INT_H):
+            st[key] = int(float(await get_setting(s, key, SMART_DEFAULTS[key])))
+        st[SMART_WINDOW] = await get_setting(s, SMART_WINDOW, SMART_DEFAULTS[SMART_WINDOW])
+    return st
+
+
+def _smart_payload(st: dict):
+    on = st["on"]
+    text = (
+        f"🧠 <b>Умная рассылка: {'🟢 ВКЛ' if on else '⚪️ выкл'}</b>\n"
+        "Бот сам подбирает частоту по активности каждого чата — ручные графики не нужны.\n\n"
+        f"• Доля рекламы от потока: <b>{st[SMART_SHARE]}%</b>\n"
+        f"• Потолок постов/день на чат: <b>{st[SMART_CAP]}</b>\n"
+        f"• Тихий чат: тишина ≥ <b>{st[SMART_DEAD_DAYS]}</b> дн → пробник\n"
+        f"• Пробник раз в: <b>{st[SMART_PROBE_DAYS]}</b> дн\n"
+        f"• Мин. интервал: <b>{st[SMART_MIN_INT_H]}</b> ч\n"
+        f"• Окно: <b>{st[SMART_WINDOW]}</b>\n\n"
+        "<i>Тихим/мёртвым — один пробник, потом ждём активность.</i>"
+    )
+
+    def row(label, key):
+        return [
+            InlineKeyboardButton(text="➖", callback_data=f"sm:{key}:-1"),
+            InlineKeyboardButton(text=f"{label}: {st[key]}", callback_data="noop"),
+            InlineKeyboardButton(text="➕", callback_data=f"sm:{key}:1"),
+        ]
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⚪️ Выключить" if on else "🟢 Включить", callback_data="sm:mode:0")],
+        row("Доля %", SMART_SHARE),
+        row("Потолок/день", SMART_CAP),
+        row("Тихий, дн", SMART_DEAD_DAYS),
+        row("Пробник, дн", SMART_PROBE_DAYS),
+        row("Интервал, ч", SMART_MIN_INT_H),
+        [
+            InlineKeyboardButton(text="Старт ➖", callback_data="sm:wins:-1"),
+            InlineKeyboardButton(text=f"Окно {st[SMART_WINDOW]}", callback_data="noop"),
+            InlineKeyboardButton(text="Стоп ➕", callback_data="sm:wine:1"),
+        ],
+        [
+            InlineKeyboardButton(text="Старт ➕", callback_data="sm:wins:1"),
+            InlineKeyboardButton(text="Стоп ➖", callback_data="sm:wine:-1"),
+        ],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="tools")],
+    ])
+    return text, kb
+
+
+@router.callback_query(F.data == "tools")
+async def on_tools_back(cq: CallbackQuery, sessionmaker) -> None:
+    await _rerender(cq, sessionmaker)
+    await cq.answer()
+
+
+@router.callback_query(F.data == "smart")
+async def on_smart(cq: CallbackQuery, sessionmaker) -> None:
+    text, kb = _smart_payload(await _smart_state(sessionmaker))
+    await ui.edit_panel(cq.message, text, kb)
+    await cq.answer()
+
+
+@router.callback_query(F.data.startswith("sm:"))
+async def on_smart_edit(cq: CallbackQuery, sessionmaker) -> None:
+    _, field, delta_s = cq.data.split(":")
+    delta = int(delta_s)
+    async with sessionmaker() as s:
+        if field == "mode":
+            cur = await get_setting(s, SMART_MODE, "off")
+            await set_setting(s, SMART_MODE, "off" if cur == "on" else "on")
+        elif field in _SMART_LIMITS:
+            lo, hi = _SMART_LIMITS[field]
+            cur = int(float(await get_setting(s, field, SMART_DEFAULTS[field])))
+            await set_setting(s, field, str(max(lo, min(hi, cur + delta))))
+        elif field in ("wins", "wine"):
+            raw = await get_setting(s, SMART_WINDOW, SMART_DEFAULTS[SMART_WINDOW])
+            try:
+                a, b = (int(x) for x in raw.split("-"))
+            except Exception:  # noqa: BLE001
+                a, b = 9, 22
+            if field == "wins":
+                a = (a + delta) % 24
+            else:
+                b = (b + delta) % 24
+            await set_setting(s, SMART_WINDOW, f"{a}-{b}")
+        await s.commit()
+    text, kb = _smart_payload(await _smart_state(sessionmaker))
+    await ui.edit_panel(cq.message, text, kb)
+    await cq.answer()
 
 
 async def render_tools_message(message: Message, sessionmaker) -> None:

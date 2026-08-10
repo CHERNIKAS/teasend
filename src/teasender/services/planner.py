@@ -20,7 +20,18 @@ from sqlalchemy.orm import selectinload
 
 from teasender.core.enums import Permission, PublicationStatus
 from teasender.db.models import Category, Chat, Publication, Template, as_utc
-from teasender.services.settings_store import POST_MODE, get_setting
+from teasender.services.settings_store import (
+    POST_MODE,
+    SMART_CAP,
+    SMART_DEAD_DAYS,
+    SMART_DEFAULTS,
+    SMART_MIN_INT_H,
+    SMART_MODE,
+    SMART_PROBE_DAYS,
+    SMART_SHARE,
+    SMART_WINDOW,
+    get_setting,
+)
 
 _ELIGIBLE = (Permission.allowed, Permission.owner)
 _ACTIVE_STATUSES = (
@@ -147,6 +158,18 @@ async def plan_day(session: AsyncSession, tz_name: str, now: datetime | None = N
 
     pool_mode = (await get_setting(session, POST_MODE, "templates")) == "pool"
 
+    # --- Smart mode: cadence driven by each chat's activity, not manual rules ---
+    if (await get_setting(session, SMART_MODE, "off")) == "on":
+        active_templates = list((await session.scalars(
+            select(Template).where(Template.is_active.is_(True)).order_by(Template.id)
+        )).all())
+        if not pool_mode and not active_templates:
+            return 0
+        return await _plan_smart(
+            session, tz, now_local, day_start_utc, day_end_utc,
+            active_templates, pool_mode,
+        )
+
     # --- Pool mode: schedule every enabled chat; post assembled at send time ---
     if pool_mode:
         planned_total = 0
@@ -218,6 +241,109 @@ async def plan_day(session: AsyncSession, tz_name: str, now: datetime | None = N
 
     await session.commit()
     return planned_total
+
+
+def _parse_window(raw: str) -> tuple[time, time]:
+    try:
+        a, b = raw.split("-")
+        return time(int(a) % 24, 0), time(int(b) % 24, 0)
+    except Exception:  # noqa: BLE001
+        return time(9, 0), time(22, 0)
+
+
+async def _smart_setting(session, key: str) -> str:
+    return await get_setting(session, key, SMART_DEFAULTS.get(key, "0"))
+
+
+async def _plan_smart(
+    session: AsyncSession,
+    tz: ZoneInfo,
+    now_local: datetime,
+    day_start_utc: datetime,
+    day_end_utc: datetime,
+    active_templates: list[Template],
+    pool_mode: bool,
+) -> int:
+    share = float(await _smart_setting(session, SMART_SHARE)) / 100.0
+    cap = float(await _smart_setting(session, SMART_CAP))
+    dead_days = float(await _smart_setting(session, SMART_DEAD_DAYS))
+    probe_days = float(await _smart_setting(session, SMART_PROBE_DAYS))
+    min_int_h = float(await _smart_setting(session, SMART_MIN_INT_H))
+    win_start_t, win_end_t = _parse_window(await _smart_setting(session, SMART_WINDOW))
+
+    now_utc = now_local.astimezone(timezone.utc)
+    today = now_local.date()
+    w_start = _combine_utc(today, win_start_t, tz)
+    w_end = _combine_utc(today, win_end_t, tz)
+    if w_end <= w_start:
+        w_end = _combine_utc(today, time(0, 0), tz) + timedelta(days=1) - timedelta(seconds=1)
+    earliest = max(w_start, now_utc)
+    if earliest >= w_end:
+        return 0  # outside today's window
+
+    chats = list((await session.scalars(
+        select(Chat).where(Chat.is_enabled.is_(True)).options(selectinload(Chat.templates))
+    )).all())
+
+    planned = 0
+    for chat in chats:
+        # Already have a future post queued? then it's covered.
+        pending = await session.scalar(
+            select(func.count()).select_from(Publication).where(
+                Publication.chat_id == chat.id,
+                Publication.status == PublicationStatus.planned,
+                Publication.scheduled_at >= now_utc,
+            )
+        )
+        if pending:
+            continue
+
+        # Last time we posted here (any non-cancelled publication).
+        last_post = await session.scalar(
+            select(func.max(Publication.scheduled_at)).where(
+                Publication.chat_id == chat.id,
+                Publication.status != PublicationStatus.cancelled,
+            )
+        )
+
+        # Activity rate (messages/day).
+        last_act = as_utc(chat.last_activity_at)
+        if chat.activity_window_start and chat.activity_msgs:
+            days = max(0.5, (now_utc - as_utc(chat.activity_window_start)).total_seconds() / 86400)
+            rate = chat.activity_msgs / days
+        else:
+            rate = 0.0
+
+        dead = last_act is None or (now_utc - last_act) >= timedelta(days=dead_days)
+        if dead:
+            interval_h = probe_days * 24  # quiet chat: just probe periodically
+        else:
+            ppd = min(cap, share * rate)
+            interval_h = probe_days * 24 if ppd <= 0 else max(min_int_h, 24.0 / ppd)
+
+        if last_post is not None and (now_utc - as_utc(last_post)) < timedelta(hours=interval_h):
+            continue  # not due yet
+
+        # Ride activity: if the chat spoke recently, post soon; else small delay.
+        recent = last_act is not None and (now_utc - last_act) < timedelta(minutes=30)
+        lo, hi = (60, 600) if recent else (300, 3600)  # seconds
+        slot = earliest + timedelta(seconds=random.uniform(lo, hi))
+        if slot >= w_end:
+            slot = earliest
+
+        templates = _chat_templates(chat, active_templates)
+        if not pool_mode and not templates:
+            continue
+        session.add(Publication(
+            chat_id=chat.id,
+            template_id=None if pool_mode else random.choice(templates).id,
+            scheduled_at=slot,
+            status=PublicationStatus.planned,
+        ))
+        planned += 1
+
+    await session.commit()
+    return planned
 
 
 def _slot_times(

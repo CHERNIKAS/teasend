@@ -17,7 +17,7 @@ BTN_CHATS = "💬 Чаты"
 BTN_TEMPLATES = "📝 Шаблоны"
 BTN_SYNC = "🔄 Синхронизация"
 BTN_PAUSE = "⏯ Пауза / Пуск"
-BTN_TOOLS = "🔗 Лиды"
+BTN_TOOLS = "🛠 Инструменты"
 
 
 def main_menu_reply() -> ReplyKeyboardMarkup:

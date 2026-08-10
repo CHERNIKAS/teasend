@@ -203,6 +203,14 @@ class Chat(Base):
     last_sent_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Activity tracking for smart broadcasting.
+    last_activity_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    activity_msgs: Mapped[int] = mapped_column(Integer, default=0)
+    activity_window_start: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     success_count: Mapped[int] = mapped_column(Integer, default=0)
     fail_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
