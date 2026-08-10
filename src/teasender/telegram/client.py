@@ -115,6 +115,16 @@ class TelegramService:
         group = [m for m in msgs if m is not None and m.grouped_id == grouped_id]
         return entity, group or [await self._client.get_messages(entity, ids=message_id)]
 
+    async def _input_entity(self, tg_id: int):
+        """Resolve a chat for sending. On a cache miss (Telethon raises
+        ValueError), refresh dialogs once and retry — new/uncached chats resolve
+        after that."""
+        try:
+            return await self._client.get_input_entity(tg_id)
+        except ValueError:
+            await self._client.get_dialogs()
+            return await self._client.get_input_entity(tg_id)
+
     async def send_pool_album(
         self,
         target_tg_id: int,
@@ -138,7 +148,7 @@ class TelegramService:
 
         k = min(random.randint(min_photos, max_photos), len(photos))
         chosen = random.sample(photos, k)
-        target = await self._client.get_input_entity(target_tg_id)
+        target = await self._input_entity(target_tg_id)
 
         if k == 1:
             sent = await self._client.send_file(target, chosen[0].media, caption=caption or "")
@@ -158,7 +168,7 @@ class TelegramService:
         the caller, which decides how to back off.
         """
         _src_entity, msgs = await self._load_source(channel_id, message_id, grouped_id)
-        target = await self._client.get_input_entity(target_tg_id)
+        target = await self._input_entity(target_tg_id)
 
         if len(msgs) == 1:
             m: Message = msgs[0]
