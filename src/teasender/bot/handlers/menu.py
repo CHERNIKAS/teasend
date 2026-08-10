@@ -12,10 +12,12 @@ from sqlalchemy import func, select
 from teasender.bot import ui
 from teasender.bot.handlers.chats import render_chats_message
 from teasender.bot.handlers.templates import render_templates_message
+from teasender.bot.handlers.stats import render_stats_message
 from teasender.bot.handlers.tools import render_tools_message
 from teasender.bot.keyboards import (
     BTN_CHATS,
     BTN_PAUSE,
+    BTN_STATS,
     BTN_STATUS,
     BTN_SYNC,
     BTN_TEMPLATES,
@@ -203,6 +205,11 @@ async def on_templates_msg(message: Message, sessionmaker) -> None:
 @router.message(F.text == BTN_TOOLS)
 async def on_tools_msg(message: Message, sessionmaker) -> None:
     await render_tools_message(message, sessionmaker)
+
+
+@router.message(F.text == BTN_STATS)
+async def on_stats_msg(message: Message, sessionmaker) -> None:
+    await render_stats_message(message, sessionmaker)
 
 
 @router.callback_query(F.data == "noop")
