@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import html
 import random
+from contextlib import suppress
 from datetime import time
 
 from aiogram import F, Router
@@ -420,6 +421,47 @@ async def on_test_now(cq: CallbackQuery, sessionmaker, telegram, settings) -> No
         if chat is not None:
             await _render_detail(cq.message, chat)
     await cq.answer("✅ Отправлено в этот чат" if ok else f"⚠️ Не ушло: {err}", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("cdelask:"))
+async def on_chat_delete_ask(cq: CallbackQuery) -> None:
+    cid = int(cq.data.split(":")[1])
+    await ui.edit_panel(
+        cq.message,
+        "🗑 <b>Удалить чат из списка?</b>\nОн исчезнет из бота (историю отправок тоже уберём). "
+        "Вернётся при следующей «Синхронизации», если аккаунт в нём состоит.",
+        InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🗑 Да, удалить", callback_data=f"cdel:{cid}"),
+            InlineKeyboardButton(text="❌ Нет", callback_data=f"chat:{cid}"),
+        ]]),
+    )
+    await cq.answer()
+
+
+@router.callback_query(F.data == "cdelok")
+async def on_chat_delete_ok(cq: CallbackQuery) -> None:
+    with suppress(Exception):
+        await cq.message.edit_reply_markup(reply_markup=None)
+    await cq.answer("Оставлен (отправка выключена)")
+
+
+@router.callback_query(F.data.startswith("cdel:"))
+async def on_chat_delete(cq: CallbackQuery, sessionmaker) -> None:
+    cid = int(cq.data.split(":")[1])
+    async with sessionmaker() as s:
+        chat = await s.get(Chat, cid)
+        title = chat.title if chat else "чат"
+        if chat is not None:
+            await s.delete(chat)
+            await s.commit()
+    with suppress(Exception):
+        await cq.message.edit_text(
+            f"🗑 «{title}» удалён из списка.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="⬅️ К чатам", callback_data="chats:allowed:0"),
+            ]]),
+        )
+    await cq.answer("Удалён")
 
 
 @router.callback_query(F.data.startswith("permpage:"))

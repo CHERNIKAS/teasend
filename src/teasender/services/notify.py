@@ -13,9 +13,9 @@ class Notifier:
         self._bot = bot
         self._admin_ids = admin_ids
 
-    async def send(self, text: str) -> None:
+    async def send(self, text: str, reply_markup=None) -> None:
         for uid in self._admin_ids:
             try:
-                await self._bot.send_message(uid, text)
+                await self._bot.send_message(uid, text, reply_markup=reply_markup)
             except Exception as exc:  # notification must never break the pipeline
                 log.warning("failed to notify %s: %s", uid, exc)

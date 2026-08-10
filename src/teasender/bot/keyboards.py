@@ -178,6 +178,7 @@ def chat_detail_kb(
                     callback_data=f"askapply:{cid}",
                 )
             ],
+            [InlineKeyboardButton(text="🗑 Удалить чат из списка", callback_data=f"cdelask:{cid}")],
             [InlineKeyboardButton(text="⬅️ К списку", callback_data=f"chats:{back_filt}:{back_page}")],
         ]
     )

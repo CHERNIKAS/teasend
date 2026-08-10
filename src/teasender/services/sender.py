@@ -239,10 +239,25 @@ class Sender:
 
         # Account can't even resolve the chat -> it's not a member (kicked/banned).
         if name == "ValueError" and "input entity" in str(exc).lower():
+            from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
             await self._finish(pub_id, PublicationStatus.failed, error=f"{name}: {exc}")
             await self._deny_chat(chat.id)
+            ref = f"@{chat.username}" if chat.username else f"id {chat.tg_chat_id}"
+            link = f"\n👉 https://t.me/{chat.username}" if chat.username else ""
+            log.warning(
+                "pub %s: cannot resolve chat '%s' (%s) — not a member, sending disabled",
+                pub_id, chat.title, chat.username or chat.tg_chat_id,
+            )
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="🗑 Удалить чат", callback_data=f"cdel:{chat.id}"),
+                InlineKeyboardButton(text="✅ Оставить", callback_data="cdelok"),
+            ]])
             await self._notifier.send(
-                f"🚫 Нет доступа к «{chat.title}» (аккаунт не участник) — отправка выключена."
+                f"🚫 {chat.title} ({ref})\n"
+                f"Не удалось открыть чат — скорее всего аккаунт кикнули/забанили или ты вышел. "
+                f"Отправка выключена (📵). Проверь вручную — если чат не нужен, удали кнопкой ниже.{link}",
+                reply_markup=kb,
             )
             return
 
