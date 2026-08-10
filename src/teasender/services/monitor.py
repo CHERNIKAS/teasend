@@ -17,6 +17,30 @@ log = logging.getLogger("teasender.monitor")
 
 # In-memory keyword list (shared with the bot handler that edits it).
 _KEYWORDS: list[str] = []
+# The logged-in account, for precise @mention detection.
+_ME_ID: int | None = None
+_ME_USERNAME: str | None = None
+
+
+def set_me(user_id: int | None, username: str | None) -> None:
+    global _ME_ID, _ME_USERNAME
+    _ME_ID = user_id
+    _ME_USERNAME = (username or "").lower() or None
+
+
+def _is_real_mention(msg) -> bool:
+    """True only on a genuine @username / by-name mention of the account —
+    NOT on Telegram's broad 'mentioned' flag, which also covers replies to us."""
+    text = msg.raw_text or ""
+    for e in (msg.entities or []):
+        cls = type(e).__name__
+        if cls == "MessageEntityMentionName" and getattr(e, "user_id", None) == _ME_ID:
+            return True
+        if cls == "MessageEntityMention" and _ME_USERNAME:
+            tag = text[e.offset:e.offset + e.length].lstrip("@").lower()
+            if tag == _ME_USERNAME:
+                return True
+    return False
 
 
 def parse_keywords(raw: str | None) -> list[str]:
@@ -73,7 +97,7 @@ async def handle_incoming(sessionmaker, notifier, event) -> None:
         if hit:
             reasons.append("💬 Ответ на твой пост")
 
-    if getattr(msg, "mentioned", False):
+    if _is_real_mention(msg):
         reasons.append("🔔 Упоминание")
 
     kw_hits = [k for k in _KEYWORDS if k in low]

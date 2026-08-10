@@ -43,6 +43,11 @@ async def main() -> None:
     runner = BackgroundRunner(settings, sender, telegram, notifier)
 
     await monitor.load_keywords(sessionmaker)
+    try:
+        me = await telegram.client.get_me()
+        monitor.set_me(me.id, getattr(me, "username", None))
+    except Exception:  # noqa: BLE001
+        log.warning("could not resolve account for mention detection")
 
     @telegram.client.on(events.MessageDeleted)
     async def _on_msg_deleted(event) -> None:  # noqa: ANN001
