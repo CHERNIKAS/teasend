@@ -16,7 +16,8 @@ from aiogram.types import (
 from sqlalchemy import delete, func, select
 
 from teasender.bot import ui
-from teasender.db.models import JoinQueue, utcnow
+from teasender.core.enums import PublicationStatus
+from teasender.db.models import Chat, JoinQueue, Publication, utcnow
 from teasender.services import monitor
 from teasender.services.settings_store import (
     JOIN_CAP,
@@ -279,3 +280,46 @@ async def cmd_keywords(message: Message, sessionmaker) -> None:
 async def cmd_join(message: Message, sessionmaker) -> None:
     await ui.delete_safe(message.bot, message.chat.id, message.message_id)
     await _add_join(message, sessionmaker, (message.text or "")[len("/join"):].strip())
+
+
+@router.message(Command("cleanup_bad"))
+async def cmd_cleanup_bad(message: Message, sessionmaker, telegram) -> None:
+    """Delete already-sent old-style posts (whole album, no caption = template
+    sends). These were the leftover queue from before pool mode."""
+    await ui.delete_safe(message.bot, message.chat.id, message.message_id)
+    await ui.open_panel(message.bot, message.chat.id, "🧹 Удаляю старые посты без подписи…")
+    async with sessionmaker() as s:
+        rows = list((await s.execute(
+            select(Publication.id, Publication.tg_message_id, Chat.tg_chat_id)
+            .join(Chat, Chat.id == Publication.chat_id)
+            .where(
+                Publication.status == PublicationStatus.sent,
+                Publication.template_id.is_not(None),
+                Publication.tg_message_id.is_not(None),
+            )
+        )).all())
+
+    deleted = failed = 0
+    done_ids: list[int] = []
+    for pub_id, msg_id, chat_tg in rows:
+        try:
+            await telegram.delete_post(chat_tg, msg_id)
+            deleted += 1
+            done_ids.append(pub_id)
+        except Exception:  # noqa: BLE001
+            failed += 1
+
+    if done_ids:
+        async with sessionmaker() as s:
+            for pid in done_ids:
+                p = await s.get(Publication, pid)
+                if p:
+                    p.status = PublicationStatus.cancelled
+                    p.error = "deleted"
+            await s.commit()
+
+    await ui.open_panel(
+        message.bot, message.chat.id,
+        f"🧹 Готово. Удалено постов: {deleted}, не удалось: {failed}.\n"
+        f"(Не удалось — там, где аккаунт больше не участник.)",
+    )

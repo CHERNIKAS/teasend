@@ -115,6 +115,21 @@ class TelegramService:
         group = [m for m in msgs if m is not None and m.grouped_id == grouped_id]
         return entity, group or [await self._client.get_messages(entity, ids=message_id)]
 
+    async def delete_post(self, target_tg_id: int, first_msg_id: int) -> None:
+        """Delete our own post. If it's an album, delete every photo of it."""
+        target = await self._input_entity(target_tg_id)
+        ids = [first_msg_id]
+        try:
+            anchor = await self._client.get_messages(target, ids=first_msg_id)
+            if anchor is not None and anchor.grouped_id:
+                around = await self._client.get_messages(
+                    target, ids=list(range(first_msg_id, first_msg_id + 10))
+                )
+                ids = [m.id for m in around if m is not None and m.grouped_id == anchor.grouped_id]
+        except Exception:  # noqa: BLE001 - fall back to the single message
+            pass
+        await self._client.delete_messages(target, ids, revoke=True)
+
     async def join_ref(self, ref: str) -> str:
         """Join a chat by @username / public link, or by invite link (+hash).
         Returns 'joined' or 'requested' (for approval-required chats). Raises on

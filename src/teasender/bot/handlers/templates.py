@@ -12,10 +12,11 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from teasender.bot import ui
-from teasender.db.models import Template
+from teasender.core.enums import PublicationStatus
+from teasender.db.models import Publication, Template
 from teasender.services.settings_store import (
     CAPTION,
     POST_MODE,
@@ -99,6 +100,18 @@ async def on_toggle_mode(cq: CallbackQuery, sessionmaker) -> None:
         cur = await get_setting(s, POST_MODE, _MODE_TPL)
         new = _MODE_POOL if cur != _MODE_POOL else _MODE_TPL
         await set_setting(s, POST_MODE, new)
+        # Drop still-pending posts of the old type so the queue doesn't send a
+        # tail in the previous mode after switching.
+        old_type = (
+            Publication.template_id.is_not(None)  # switching to pool -> drop template posts
+            if new == _MODE_POOL
+            else Publication.template_id.is_(None)  # switching to templates -> drop pool posts
+        )
+        await s.execute(
+            update(Publication)
+            .where(Publication.status == PublicationStatus.planned, old_type)
+            .values(status=PublicationStatus.cancelled)
+        )
         await s.commit()
     await _rerender(cq, sessionmaker)
     await cq.answer("Режим: ПУЛ фото" if new == _MODE_POOL else "Режим: Шаблоны")
