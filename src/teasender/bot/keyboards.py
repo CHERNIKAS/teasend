@@ -17,7 +17,6 @@ BTN_CHATS = "💬 Чаты"
 BTN_TEMPLATES = "📝 Шаблоны"
 BTN_SYNC = "🔄 Синхронизация"
 BTN_PAUSE = "⏯ Пауза / Пуск"
-BTN_HIDE = "⌨️ Свернуть меню"
 BTN_TOOLS = "🔗 Лиды"
 
 
@@ -27,7 +26,6 @@ def main_menu_reply() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_STATUS), KeyboardButton(text=BTN_CHATS)],
             [KeyboardButton(text=BTN_TEMPLATES), KeyboardButton(text=BTN_SYNC)],
             [KeyboardButton(text=BTN_TOOLS), KeyboardButton(text=BTN_PAUSE)],
-            [KeyboardButton(text=BTN_HIDE)],
         ],
         resize_keyboard=True,
         input_field_placeholder="Выберите раздел…",

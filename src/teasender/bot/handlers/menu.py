@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
-from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy import func, select
 
 from teasender.bot import ui
@@ -14,7 +14,6 @@ from teasender.bot.handlers.templates import render_templates_message
 from teasender.bot.handlers.tools import render_tools_message
 from teasender.bot.keyboards import (
     BTN_CHATS,
-    BTN_HIDE,
     BTN_PAUSE,
     BTN_STATUS,
     BTN_SYNC,
@@ -142,12 +141,6 @@ async def on_templates_msg(message: Message, sessionmaker) -> None:
 @router.message(F.text == BTN_TOOLS)
 async def on_tools_msg(message: Message, sessionmaker) -> None:
     await render_tools_message(message, sessionmaker)
-
-
-@router.message(F.text == BTN_HIDE)
-async def on_hide(message: Message) -> None:
-    await ui.delete_safe(message.bot, message.chat.id, message.message_id)
-    await message.answer("Меню свёрнуто. /menu — вернуть.", reply_markup=ReplyKeyboardRemove())
 
 
 @router.callback_query(F.data == "noop")
