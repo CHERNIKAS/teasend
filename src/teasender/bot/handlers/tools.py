@@ -16,6 +16,7 @@ from aiogram.types import (
 from sqlalchemy import delete, func, select
 
 from teasender.bot import ui
+from teasender.bot.keyboards import main_menu_reply
 from teasender.core.enums import PublicationStatus
 from teasender.db.models import Chat, JoinQueue, Publication, utcnow
 from teasender.services import monitor
@@ -238,7 +239,10 @@ async def _save_keywords(message: Message, sessionmaker, raw: str) -> None:
         await s.commit()
     monitor.set_keywords(words)
     shown = ", ".join(words) if words else "— (выкл)"
-    await ui.open_panel(message.bot, message.chat.id, f"✅ Мониторю слова: {html.escape(shown)}")
+    await message.answer(
+        f"✅ Мониторю слова: {html.escape(shown)}",
+        parse_mode="HTML", reply_markup=main_menu_reply(),
+    )
 
 
 async def _add_join(message: Message, sessionmaker, raw: str) -> None:
@@ -253,9 +257,9 @@ async def _add_join(message: Message, sessionmaker, raw: str) -> None:
                 s.add(JoinQueue(ref=ref))
                 added += 1
         await s.commit()
-    await ui.open_panel(
-        message.bot, message.chat.id,
-        f"✅ Добавлено в очередь: {added}. Бот вступит по лимиту (см. «🔗 Лиды и вступление»).",
+    await message.answer(
+        f"✅ Добавлено в очередь: {added}. Бот вступит по лимиту (см. «🛠 Инструменты»).",
+        reply_markup=main_menu_reply(),
     )
 
 

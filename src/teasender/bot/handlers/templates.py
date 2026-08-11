@@ -15,6 +15,7 @@ from aiogram.types import (
 from sqlalchemy import select, update
 
 from teasender.bot import ui
+from teasender.bot.keyboards import main_menu_reply
 from teasender.core.enums import PublicationStatus
 from teasender.db.models import Publication, Template
 from teasender.services.settings_store import (
@@ -129,7 +130,7 @@ async def _save_caption(message: Message, sessionmaker, text: str) -> None:
     body = f"✅ Подпись обновлена:\n<code>{shown}</code>"
     if examples:
         body += f"\n\n<b>Примеры того, что уйдёт:</b>\n{examples}"
-    await ui.open_panel(message.bot, message.chat.id, body)
+    await message.answer(body, parse_mode="HTML", reply_markup=main_menu_reply())
 
 
 @router.callback_query(F.data == "setcap")
