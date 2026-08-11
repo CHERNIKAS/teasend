@@ -67,6 +67,7 @@ def _payload(cap: int, kw: str, pending: int, joined24: int):
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🧠 Умная рассылка", callback_data="smart")],
+        [InlineKeyboardButton(text="📜 Сканировать правила чатов", callback_data="scanrules")],
         [InlineKeyboardButton(text="✍️ Задать слова", callback_data="setkw")],
         [InlineKeyboardButton(text="➕ Добавить чаты в очередь", callback_data="addjoin")],
         [
@@ -289,6 +290,32 @@ async def cmd_keywords(message: Message, sessionmaker) -> None:
 async def cmd_join(message: Message, sessionmaker) -> None:
     await ui.delete_safe(message.bot, message.chat.id, message.message_id)
     await _add_join(message, sessionmaker, (message.text or "")[len("/join"):].strip())
+
+
+async def _run_scan(bot, chat_id: int, sessionmaker, telegram) -> None:
+    from teasender.services.rulescan import scan_batch
+    await ui.open_panel(bot, chat_id, "📜 Читаю описания и закрепы чатов… (это займёт минуту)")
+    res = await scan_batch(sessionmaker, telegram, limit=60)
+    await bot.send_message(
+        chat_id,
+        f"📜 Проверено чатов: {res['scanned']}\n"
+        f"Найдено правил: {res['rules']} · отключено (реклама запрещена): {res['ads_off']}\n"
+        f"Осталось непроверенных: {res['remaining']}"
+        + ("\n\nНажми ещё раз, чтобы продолжить." if res["remaining"] else ""),
+        reply_markup=main_menu_reply(),
+    )
+
+
+@router.callback_query(F.data == "scanrules")
+async def on_scan_rules(cq: CallbackQuery, sessionmaker, telegram) -> None:
+    await cq.answer("Сканирую…")
+    await _run_scan(cq.bot, cq.message.chat.id, sessionmaker, telegram)
+
+
+@router.message(Command("scan_rules"))
+async def cmd_scan_rules(message: Message, sessionmaker, telegram) -> None:
+    await ui.delete_safe(message.bot, message.chat.id, message.message_id)
+    await _run_scan(message.bot, message.chat.id, sessionmaker, telegram)
 
 
 @router.message(Command("cleanup_bad"))

@@ -211,6 +211,10 @@ class Chat(Base):
     activity_window_start: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Posting rules read from the chat's description / pinned message.
+    rule_min_interval_h: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rule_ads_forbidden: Mapped[bool] = mapped_column(Boolean, default=False)
+    rule_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     success_count: Mapped[int] = mapped_column(Integer, default=0)
     fail_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

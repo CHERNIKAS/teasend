@@ -94,6 +94,29 @@ async def _schedule_chat(
     if not pool and not templates:
         return 0
 
+    now_utc = now_local.astimezone(timezone.utc)
+
+    # Chat rule from its description/pin: never post more often than allowed.
+    if chat.rule_min_interval_h:
+        last_post = await session.scalar(
+            select(func.max(Publication.scheduled_at)).where(
+                Publication.chat_id == chat.id,
+                Publication.status != PublicationStatus.cancelled,
+            )
+        )
+        if last_post is not None and (now_utc - as_utc(last_post)) < timedelta(hours=chat.rule_min_interval_h):
+            return 0  # too soon per the chat's rule
+        slots = _slot_times(sched, day, tz, now_local, 1)  # one post, respect the rule
+        for slot_utc in slots:
+            session.add(Publication(
+                chat_id=chat.id,
+                template_id=None if pool else random.choice(templates).id,
+                category_id=category_id,
+                scheduled_at=slot_utc,
+                status=PublicationStatus.planned,
+            ))
+        return len(slots)
+
     cat_clause = (
         Publication.category_id == category_id
         if category_id is not None
@@ -320,6 +343,10 @@ async def _plan_smart(
         else:
             ppd = min(cap, share * rate)
             interval_h = probe_days * 24 if ppd <= 0 else max(min_int_h, 24.0 / ppd)
+
+        # Never post more often than the chat's own rule allows.
+        if chat.rule_min_interval_h:
+            interval_h = max(interval_h, float(chat.rule_min_interval_h))
 
         if last_post is not None and (now_utc - as_utc(last_post)) < timedelta(hours=interval_h):
             continue  # not due yet

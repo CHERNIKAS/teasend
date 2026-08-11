@@ -155,11 +155,15 @@ def _detail_text(chat: Chat) -> str:
     else:
         tpl_line = "Шаблоны: по умолчанию (первый активный)"
     send_line = "📤 Отправка: ВКЛ" if chat.is_enabled else "📵 Отправка: выкл"
+    rule_line = ""
+    if chat.rule_note and chat.rule_note != "нет правил":
+        rule_line = f"📜 Правило: {html.escape(chat.rule_note)}\n"
     return (
         f"<code>{html.escape(chat.title)}</code>\n"
         f"ID: <code>{chat.tg_chat_id}</code>\n"
         f"{send_line}\n"
         f"Метка: {perm_label(chat.permission)}\n"
+        f"{rule_line}"
         f"{tpl_line}\n"
         f"Отправлено/ошибок: {chat.success_count}/{chat.fail_count}"
     )

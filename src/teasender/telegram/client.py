@@ -115,6 +115,30 @@ class TelegramService:
         group = [m for m in msgs if m is not None and m.grouped_id == grouped_id]
         return entity, group or [await self._client.get_messages(entity, ids=message_id)]
 
+    async def read_chat_rules(self, tg_id: int) -> str:
+        """Return the chat's description (About) + pinned message text, for rule
+        parsing. Empty string if unavailable."""
+        from telethon.tl.functions.channels import GetFullChannelRequest
+
+        parts: list[str] = []
+        try:
+            ent = await self._client.get_entity(tg_id)
+        except Exception:  # noqa: BLE001
+            return ""
+        try:
+            full = await self._client(GetFullChannelRequest(ent))
+            about = getattr(full.full_chat, "about", None)
+            if about:
+                parts.append(about)
+            pinned_id = getattr(full.full_chat, "pinned_msg_id", None)
+            if pinned_id:
+                pin = await self._client.get_messages(ent, ids=pinned_id)
+                if pin is not None and pin.message:
+                    parts.append(pin.message)
+        except Exception:  # noqa: BLE001 - basic groups / no access
+            pass
+        return "\n".join(parts)
+
     async def delete_post(self, target_tg_id: int, first_msg_id: int) -> None:
         """Delete our own post. If it's an album, delete every photo of it."""
         target = await self._input_entity(target_tg_id)
