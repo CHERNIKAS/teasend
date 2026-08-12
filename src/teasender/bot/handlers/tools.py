@@ -6,16 +6,11 @@ from datetime import timedelta
 
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import (
-    CallbackQuery,
-    ForceReply,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    Message,
-)
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import delete, func, select
 
 from teasender.bot import ui
+from teasender.bot.awaiting import pop_await, set_await
 from teasender.bot.keyboards import main_menu_reply
 from teasender.core.enums import PublicationStatus
 from teasender.db.models import Chat, JoinQueue, Publication, utcnow
@@ -37,8 +32,8 @@ from teasender.services.settings_store import (
 
 router = Router(name="tools")
 
-_KW_PROMPT = "🔎 Пришли ключевые слова через запятую ответом на это сообщение."
-_JOIN_PROMPT = "📥 Пришли чаты (@username или ссылки, по одному в строке) ответом на это сообщение."
+_KW_PROMPT = "🔎 Пришли ключевые слова через запятую <b>следующим сообщением</b>.\n<i>Отмена — нажми любой пункт меню.</i>"
+_JOIN_PROMPT = "📥 Пришли чаты (@username или ссылки, по одному в строке) <b>следующим сообщением</b>.\n<i>Отмена — нажми любой пункт меню.</i>"
 
 
 async def _state(sessionmaker):
@@ -223,13 +218,15 @@ async def on_clear(cq: CallbackQuery, sessionmaker) -> None:
 
 @router.callback_query(F.data == "setkw")
 async def on_setkw(cq: CallbackQuery) -> None:
-    await cq.message.answer(_KW_PROMPT, reply_markup=ForceReply(input_field_placeholder="куплю чай, ищу пуэр, где купить"))
+    set_await(cq.message.chat.id, "kw")
+    await cq.message.answer(_KW_PROMPT, parse_mode="HTML")
     await cq.answer()
 
 
 @router.callback_query(F.data == "addjoin")
 async def on_addjoin(cq: CallbackQuery) -> None:
-    await cq.message.answer(_JOIN_PROMPT, reply_markup=ForceReply(input_field_placeholder="@chat1  https://t.me/chat2"))
+    set_await(cq.message.chat.id, "join")
+    await cq.message.answer(_JOIN_PROMPT, parse_mode="HTML")
     await cq.answer()
 
 
@@ -264,20 +261,22 @@ async def _add_join(message: Message, sessionmaker, raw: str) -> None:
     )
 
 
-@router.message(F.reply_to_message.func(lambda m: m and (m.text or "").startswith(_KW_PROMPT[:15])))
-async def on_kw_reply(message: Message, sessionmaker) -> None:
+@router.message(F.text & ~F.text.startswith("/"))
+async def on_text_input(message: Message, sessionmaker) -> None:
+    """Catch free text when we're awaiting input (keywords / join list / caption).
+    Registered last; menu buttons and commands are consumed by earlier routers."""
+    kind = pop_await(message.chat.id)
+    if not kind:
+        return
+    text = message.text or ""
     await ui.delete_safe(message.bot, message.chat.id, message.message_id)
-    if message.reply_to_message:
-        await ui.delete_safe(message.bot, message.chat.id, message.reply_to_message.message_id)
-    await _save_keywords(message, sessionmaker, message.text or "")
-
-
-@router.message(F.reply_to_message.func(lambda m: m and (m.text or "").startswith(_JOIN_PROMPT[:15])))
-async def on_join_reply(message: Message, sessionmaker) -> None:
-    await ui.delete_safe(message.bot, message.chat.id, message.message_id)
-    if message.reply_to_message:
-        await ui.delete_safe(message.bot, message.chat.id, message.reply_to_message.message_id)
-    await _add_join(message, sessionmaker, message.text or "")
+    if kind == "kw":
+        await _save_keywords(message, sessionmaker, text)
+    elif kind == "join":
+        await _add_join(message, sessionmaker, text)
+    elif kind == "caption":
+        from teasender.bot.handlers.templates import save_caption_input
+        await save_caption_input(message, sessionmaker, text)
 
 
 @router.message(Command("keywords"))

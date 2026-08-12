@@ -5,16 +5,11 @@ import html
 
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import (
-    CallbackQuery,
-    ForceReply,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    Message,
-)
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import select, update
 
 from teasender.bot import ui
+from teasender.bot.awaiting import set_await
 from teasender.bot.keyboards import main_menu_reply
 from teasender.core.enums import PublicationStatus
 from teasender.db.models import Publication, Template
@@ -118,7 +113,10 @@ async def on_toggle_mode(cq: CallbackQuery, sessionmaker) -> None:
     await cq.answer("Режим: ПУЛ фото" if new == _MODE_POOL else "Режим: Шаблоны")
 
 
-_CAP_PROMPT = "✍️ Пришли новую подпись (спинтакс) ответом на это сообщение."
+_CAP_PROMPT = (
+    "✍️ Пришли новую подпись (спинтакс) <b>следующим сообщением</b>.\n"
+    "<i>Отмена — нажми любой пункт меню.</i>"
+)
 
 
 async def _save_caption(message: Message, sessionmaker, text: str) -> None:
@@ -133,22 +131,16 @@ async def _save_caption(message: Message, sessionmaker, text: str) -> None:
     await message.answer(body, parse_mode="HTML", reply_markup=main_menu_reply())
 
 
+# Called by the shared text-input catcher (tools.on_text_input) when awaiting caption.
+async def save_caption_input(message: Message, sessionmaker, text: str) -> None:
+    await _save_caption(message, sessionmaker, text.strip())
+
+
 @router.callback_query(F.data == "setcap")
 async def on_setcap(cq: CallbackQuery) -> None:
-    await cq.message.answer(
-        _CAP_PROMPT,
-        reply_markup=ForceReply(input_field_placeholder="{Привет|Хай}, чай в продаже 🍵 {в лс|в личку}"),
-    )
+    set_await(cq.message.chat.id, "caption")
+    await cq.message.answer(_CAP_PROMPT, parse_mode="HTML")
     await cq.answer()
-
-
-@router.message(F.reply_to_message.func(lambda m: m and (m.text or "").startswith(_CAP_PROMPT[:20])))
-async def on_caption_reply(message: Message, sessionmaker) -> None:
-    text = (message.text or "").strip()
-    await ui.delete_safe(message.bot, message.chat.id, message.message_id)
-    if message.reply_to_message:
-        await ui.delete_safe(message.bot, message.chat.id, message.reply_to_message.message_id)
-    await _save_caption(message, sessionmaker, text)
 
 
 @router.message(Command("caption"))

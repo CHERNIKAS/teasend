@@ -10,6 +10,7 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy import func, select
 
 from teasender.bot import ui
+from teasender.bot.awaiting import clear_await
 from teasender.bot.handlers.chats import render_chats_message
 from teasender.bot.handlers.templates import render_templates_message
 from teasender.bot.handlers.stats import render_stats_message
@@ -59,6 +60,7 @@ _ELIGIBLE = (Permission.allowed, Permission.owner)
 @router.message(CommandStart())
 @router.message(Command("menu"))
 async def on_start(message: Message) -> None:
+    clear_await(message.chat.id)
     await ui.delete_safe(message.bot, message.chat.id, message.message_id)
     await message.answer(
         "🫖 <b>TeaSender</b> — панель управления.\n"
@@ -180,6 +182,7 @@ async def _build_status(sessionmaker, settings: Settings) -> str:
 
 @router.message(F.text == BTN_STATUS)
 async def on_status_msg(message: Message, sessionmaker, settings: Settings) -> None:
+    clear_await(message.chat.id)
     await ui.delete_safe(message.bot, message.chat.id, message.message_id)
     text = await _build_status(sessionmaker, settings)
     await ui.open_panel(message.bot, message.chat.id, text, status_kb())
@@ -194,21 +197,25 @@ async def on_status_cb(cq: CallbackQuery, sessionmaker, settings: Settings) -> N
 
 @router.message(F.text == BTN_CHATS)
 async def on_chats_msg(message: Message, sessionmaker) -> None:
+    clear_await(message.chat.id)
     await render_chats_message(message, sessionmaker, filt="allowed", page=0)
 
 
 @router.message(F.text == BTN_TEMPLATES)
 async def on_templates_msg(message: Message, sessionmaker) -> None:
+    clear_await(message.chat.id)
     await render_templates_message(message, sessionmaker)
 
 
 @router.message(F.text == BTN_TOOLS)
 async def on_tools_msg(message: Message, sessionmaker) -> None:
+    clear_await(message.chat.id)
     await render_tools_message(message, sessionmaker)
 
 
 @router.message(F.text == BTN_STATS)
 async def on_stats_msg(message: Message, sessionmaker) -> None:
+    clear_await(message.chat.id)
     await render_stats_message(message, sessionmaker)
 
 
@@ -237,6 +244,7 @@ async def _toggle_pause(sessionmaker) -> str:
 
 @router.message(F.text == BTN_PAUSE)
 async def on_pause_msg(message: Message, sessionmaker, settings: Settings) -> None:
+    clear_await(message.chat.id)
     await ui.delete_safe(message.bot, message.chat.id, message.message_id)
     await _toggle_pause(sessionmaker)
     text = await _build_status(sessionmaker, settings)
@@ -339,6 +347,7 @@ async def on_purge_channels(message: Message, sessionmaker, telegram) -> None:
 
 @router.message(F.text == BTN_SYNC)
 async def on_sync_msg(message: Message, sessionmaker, settings: Settings, telegram) -> None:
+    clear_await(message.chat.id)
     await ui.delete_safe(message.bot, message.chat.id, message.message_id)
     await ui.open_panel(message.bot, message.chat.id, "🔄 Синхронизация…")
     text = await _do_sync(sessionmaker, settings, telegram)
