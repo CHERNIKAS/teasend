@@ -17,6 +17,14 @@ from teasender.services.notify import Notifier
 
 log = logging.getLogger("teasender.deletions")
 
+# Message ids the bot itself deleted (e.g. /cleanup_bad) — so our own deletions
+# don't trigger the "someone deleted our post" auto-deny.
+_SELF_DELETED: set[int] = set()
+
+
+def mark_self_deleted(ids: list[int]) -> None:
+    _SELF_DELETED.update(ids)
+
 
 def _peer_from_channel_id(channel_id: int | None) -> int | None:
     """Telethon reports a bare channel id (e.g. 1586677744); our chats store the
@@ -32,6 +40,14 @@ async def handle_deletions(
     deleted_ids: list[int],
     channel_id: int | None,
 ) -> None:
+    # Ignore deletions the bot performed itself (consume them from the set).
+    remaining = []
+    for i in deleted_ids:
+        if i in _SELF_DELETED:
+            _SELF_DELETED.discard(i)
+        else:
+            remaining.append(i)
+    deleted_ids = remaining
     if not deleted_ids:
         return
 

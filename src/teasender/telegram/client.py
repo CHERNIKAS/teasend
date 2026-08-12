@@ -152,6 +152,12 @@ class TelegramService:
                 ids = [m.id for m in around if m is not None and m.grouped_id == anchor.grouped_id]
         except Exception:  # noqa: BLE001 - fall back to the single message
             pass
+        # Tell the deletion watcher these are our own, so it doesn't auto-deny.
+        try:
+            from teasender.services.deletions import mark_self_deleted
+            mark_self_deleted(ids)
+        except Exception:  # noqa: BLE001
+            pass
         await self._client.delete_messages(target, ids, revoke=True)
 
     async def join_ref(self, ref: str) -> str:
