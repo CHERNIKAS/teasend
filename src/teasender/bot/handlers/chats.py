@@ -56,6 +56,7 @@ _FILTER_LABELS = {
     "all": "Все",
     "deleted": "🗑 Удаляли посты",
     "restricted": "🚫 Ограничили отправку",
+    "ruled": "📜 С правилами",
 }
 
 
@@ -89,6 +90,8 @@ def _filter_clause(filt: str):
                 ),
             )
         )
+    if filt == "ruled":
+        return or_(Chat.rule_min_interval_h.is_not(None), Chat.rule_ads_forbidden.is_(True))
     return None  # "all"
 
 
@@ -122,6 +125,7 @@ async def _list_text(sessionmaker, filt: str) -> str:
         "all": "Все",
         "deleted": "🗑 Удаляли посты",
         "restricted": "🚫 Ограничили отправку",
+        "ruled": "📜 С правилами",
     }.get(filt, "Чаты")
     return f"💬 <b>Чаты</b> · {label} ({total})"
 
@@ -228,6 +232,15 @@ async def on_toggle_send(cq: CallbackQuery, sessionmaker) -> None:
         cq, sessionmaker, chat_id, lambda c: setattr(c, "is_enabled", not c.is_enabled)
     )
     await cq.answer("Готово")
+
+
+@router.callback_query(F.data.startswith("smartex:"))
+async def on_smart_exempt(cq: CallbackQuery, sessionmaker) -> None:
+    chat_id = int(cq.data.split(":")[1])
+    await _mutate_and_render(
+        cq, sessionmaker, chat_id, lambda c: setattr(c, "smart_exempt", not c.smart_exempt)
+    )
+    await cq.answer("Свои настройки" )
 
 
 @router.callback_query(F.data.startswith("ppd:"))

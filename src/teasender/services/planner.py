@@ -301,8 +301,6 @@ async def _plan_smart(
     if w_end <= w_start:
         w_end = _combine_utc(today, time(0, 0), tz) + timedelta(days=1) - timedelta(seconds=1)
     earliest = max(w_start, now_utc)
-    if earliest >= w_end:
-        return 0  # outside today's window
 
     chats = list((await session.scalars(
         select(Chat).where(Chat.is_enabled.is_(True)).options(selectinload(Chat.templates))
@@ -310,6 +308,15 @@ async def _plan_smart(
 
     planned = 0
     for chat in chats:
+        # Chats opted out of smart mode use their own per-chat schedule.
+        if chat.smart_exempt:
+            planned += await _schedule_chat(
+                session, chat, chat, _chat_templates(chat, active_templates), None,
+                today, tz, now_local, day_start_utc, day_end_utc, pool=pool_mode,
+            )
+            continue
+        if earliest >= w_end:
+            continue  # smart window closed for today
         # Already have a future post queued? then it's covered.
         pending = await session.scalar(
             select(func.count()).select_from(Publication).where(

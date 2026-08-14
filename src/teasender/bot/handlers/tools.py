@@ -17,6 +17,7 @@ from teasender.db.models import Chat, JoinQueue, Publication, utcnow
 from teasender.services import monitor
 from teasender.services.settings_store import (
     JOIN_CAP,
+    JOIN_ON,
     KEYWORDS,
     SMART_CAP,
     SMART_DEAD_DAYS,
@@ -39,6 +40,7 @@ _JOIN_PROMPT = "📥 Пришли чаты (@username или ссылки, по 
 async def _state(sessionmaker):
     async with sessionmaker() as s:
         cap = int((await get_setting(s, JOIN_CAP, "5")) or "5")
+        join_on = (await get_setting(s, JOIN_ON, "on")) == "on"
         kw = await get_setting(s, KEYWORDS, "") or ""
         pending = await s.scalar(
             select(func.count()).select_from(JoinQueue).where(JoinQueue.status == "pending")
@@ -48,16 +50,16 @@ async def _state(sessionmaker):
             select(func.count()).select_from(JoinQueue)
             .where(JoinQueue.status == "joined", JoinQueue.joined_at >= since)
         )
-    return cap, kw, pending or 0, joined24 or 0
+    return cap, join_on, kw, pending or 0, joined24 or 0
 
 
-def _payload(cap: int, kw: str, pending: int, joined24: int):
+def _payload(cap: int, join_on: bool, kw: str, pending: int, joined24: int):
     kw_show = html.escape(kw) if kw else "— (выкл)"
     text = (
         "🔗 <b>Лиды и вступление</b>\n\n"
         f"🔎 Мониторю слова: {kw_show}\n"
         "<i>Пингую, когда в чатах отвечают на твой пост, тегают тебя или пишут эти слова.</i>\n\n"
-        f"📥 Автовступление: в очереди <b>{pending}</b>, за сутки {joined24}/{cap}\n"
+        f"📥 Автовступление: {'🟢 ВКЛ' if join_on else '⚪️ выкл'} · в очереди <b>{pending}</b>, за сутки {joined24}/{cap}\n"
         "<i>Бот вступает равномерно, не превышая лимит в день.</i>"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -70,7 +72,10 @@ def _payload(cap: int, kw: str, pending: int, joined24: int):
             InlineKeyboardButton(text=f"Лимит вступлений/сутки: {cap}", callback_data="noop"),
             InlineKeyboardButton(text="➕", callback_data="jcap:1"),
         ],
-        [InlineKeyboardButton(text="🧹 Очистить очередь", callback_data="joinclr")],
+        [InlineKeyboardButton(
+            text="⚪️ Выключить автовступление" if join_on else "🟢 Включить автовступление",
+            callback_data="jointoggle",
+        )],
     ])
     return text, kb
 
@@ -207,13 +212,15 @@ async def on_cap(cq: CallbackQuery, sessionmaker) -> None:
     await cq.answer()
 
 
-@router.callback_query(F.data == "joinclr")
-async def on_clear(cq: CallbackQuery, sessionmaker) -> None:
+@router.callback_query(F.data == "jointoggle")
+async def on_join_toggle(cq: CallbackQuery, sessionmaker) -> None:
     async with sessionmaker() as s:
-        await s.execute(delete(JoinQueue).where(JoinQueue.status == "pending"))
+        cur = await get_setting(s, JOIN_ON, "on")
+        new = "off" if cur == "on" else "on"
+        await set_setting(s, JOIN_ON, new)
         await s.commit()
     await _rerender(cq, sessionmaker)
-    await cq.answer("Очередь очищена")
+    await cq.answer("Автовступление включено" if new == "on" else "Автовступление выключено")
 
 
 @router.callback_query(F.data == "setkw")
@@ -245,18 +252,20 @@ async def _save_keywords(message: Message, sessionmaker, raw: str) -> None:
 
 async def _add_join(message: Message, sessionmaker, raw: str) -> None:
     refs = [r.strip() for r in raw.replace(",", "\n").splitlines() if r.strip()]
-    added = 0
+    added = skipped = 0
     async with sessionmaker() as s:
         for ref in refs:
-            exists = await s.scalar(
-                select(JoinQueue).where(JoinQueue.ref == ref, JoinQueue.status == "pending")
-            )
+            # Skip anything already in the queue (pending/joined/skipped/failed).
+            exists = await s.scalar(select(JoinQueue).where(JoinQueue.ref == ref))
             if exists is None:
                 s.add(JoinQueue(ref=ref))
                 added += 1
+            else:
+                skipped += 1
         await s.commit()
+    dup = f" · пропущено дублей: {skipped}" if skipped else ""
     await message.answer(
-        f"✅ Добавлено в очередь: {added}. Бот вступит по лимиту (см. «🛠 Инструменты»).",
+        f"✅ Добавлено в очередь: {added}{dup}. Бот вступит по лимиту (см. «🛠 Инструменты»).",
         reply_markup=main_menu_reply(),
     )
 

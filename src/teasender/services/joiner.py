@@ -11,13 +11,15 @@ from datetime import timedelta
 from sqlalchemy import func, select
 
 from teasender.db.models import JoinQueue, as_utc, utcnow
-from teasender.services.settings_store import JOIN_CAP, get_setting
+from teasender.services.settings_store import JOIN_CAP, JOIN_ON, get_setting
 
 log = logging.getLogger("teasender.joiner")
 
 
 async def process_join(sessionmaker, telegram, notifier) -> None:
     async with sessionmaker() as s:
+        if (await get_setting(s, JOIN_ON, "on")) != "on":
+            return
         cap = int((await get_setting(s, JOIN_CAP, "5")) or "5")
         if cap <= 0:
             return

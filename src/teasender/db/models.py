@@ -215,6 +215,8 @@ class Chat(Base):
     rule_min_interval_h: Mapped[int | None] = mapped_column(Integer, nullable=True)
     rule_ads_forbidden: Mapped[bool] = mapped_column(Boolean, default=False)
     rule_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Exempt this chat from smart broadcasting -> use its own per-chat schedule.
+    smart_exempt: Mapped[bool] = mapped_column(Boolean, default=False)
     success_count: Mapped[int] = mapped_column(Integer, default=0)
     fail_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

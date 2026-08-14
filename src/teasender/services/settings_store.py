@@ -10,6 +10,7 @@ CAPTION = "caption"       # caption text for pool mode
 SOURCE = "drafts_channel"  # source / pool channel override
 KEYWORDS = "keywords"     # comma/newline separated monitor keywords
 JOIN_CAP = "join_cap"     # max auto-joins per 24h
+JOIN_ON = "join_on"       # "on" | "off" — auto-join enabled
 
 # Smart broadcasting
 SMART_MODE = "smart_mode"          # "on" | "off"

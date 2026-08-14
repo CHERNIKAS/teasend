@@ -59,6 +59,7 @@ _FILTERS = [
 _FILTERS2 = [
     ("deleted", "🗑 Удаляли"),
     ("restricted", "🚫 Ограничили"),
+    ("ruled", "📜 С правилами"),
 ]
 
 _PERM_LABEL = {
@@ -92,7 +93,10 @@ def chats_list_kb(
     # In the log-derived views show that view's own tag, not the generic status.
     filt_tag = {"restricted": "🚫 ограничили", "deleted": "🗑 удаляли"}.get(filt)
     for c in chats:
-        tag = filt_tag or perm_label(c.permission)
+        if filt == "ruled":
+            tag = f"📜 {c.rule_note}" if c.rule_note and c.rule_note != "нет правил" else "📜"
+        else:
+            tag = filt_tag or perm_label(c.permission)
         kb.append(
             [
                 InlineKeyboardButton(
@@ -167,6 +171,11 @@ def chat_detail_kb(
                 InlineKeyboardButton(text="⛔ В запрещённые", callback_data=f"perm:{cid}:denied"),
             ],
             [InlineKeyboardButton(text=tpl_label, callback_data=f"ctpl:{cid}")],
+            [InlineKeyboardButton(
+                text="🧠 Умный режим: ⚪️ выкл (свои настройки)" if chat.smart_exempt
+                else "🧠 Умный режим: 🟢 вкл (авто)",
+                callback_data=f"smartex:{cid}",
+            )],
             [
                 InlineKeyboardButton(text="➖", callback_data=f"ppd:{cid}:-1"),
                 InlineKeyboardButton(text=f"Постов/день: {chat.posts_per_day}", callback_data="noop"),
