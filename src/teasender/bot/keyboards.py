@@ -145,7 +145,8 @@ _DAY_NAMES = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 
 
 def chat_detail_kb(
-    chat: Chat, tpl_count: int, back_filt: str = "allowed", back_page: int = 0
+    chat: Chat, tpl_count: int, pool_mode: bool = False,
+    back_filt: str = "allowed", back_page: int = 0,
 ) -> InlineKeyboardMarkup:
     cid = chat.id
     tpl_label = f"🧩 Шаблоны чата: {tpl_count}" if tpl_count else "🧩 Шаблоны: по умолчанию"
@@ -170,7 +171,7 @@ def chat_detail_kb(
                 InlineKeyboardButton(text="✅ В разрешённые", callback_data=f"perm:{cid}:allowed"),
                 InlineKeyboardButton(text="⛔ В запрещённые", callback_data=f"perm:{cid}:denied"),
             ],
-            [InlineKeyboardButton(text=tpl_label, callback_data=f"ctpl:{cid}")],
+            *([] if pool_mode else [[InlineKeyboardButton(text=tpl_label, callback_data=f"ctpl:{cid}")]]),
             [InlineKeyboardButton(
                 text="🧠 Умный режим: ⚪️ выкл (свои настройки)" if chat.smart_exempt
                 else "🧠 Умный режим: 🟢 вкл (авто)",

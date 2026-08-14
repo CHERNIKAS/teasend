@@ -150,14 +150,18 @@ async def on_chats(cq: CallbackQuery, sessionmaker) -> None:
     await cq.answer()
 
 
-def _detail_text(chat: Chat) -> str:
-    tpls = [t for t in chat.templates if t.is_active]
-    if tpls:
-        tpl_line = "Шаблоны: " + ", ".join((t.preview_text or t.label or "?")[:20] for t in tpls[:3])
-        if len(tpls) > 3:
-            tpl_line += f" +{len(tpls) - 3}"
-    else:
-        tpl_line = "Шаблоны: по умолчанию (первый активный)"
+def _detail_text(chat: Chat, pool_mode: bool) -> str:
+    # Templates only matter in "Шаблоны" mode; hide the line in pool mode.
+    tpl_line = ""
+    if not pool_mode:
+        tpls = [t for t in chat.templates if t.is_active]
+        if tpls:
+            tpl_line = "Шаблоны: " + ", ".join((t.preview_text or t.label or "?")[:20] for t in tpls[:3])
+            if len(tpls) > 3:
+                tpl_line += f" +{len(tpls) - 3}"
+        else:
+            tpl_line = "Шаблоны: по умолчанию (первый активный)"
+        tpl_line += "\n"
     send_line = "📤 Отправка: ВКЛ" if chat.is_enabled else "📵 Отправка: выкл"
     rule_line = ""
     if chat.rule_note and chat.rule_note != "нет правил":
@@ -168,17 +172,17 @@ def _detail_text(chat: Chat) -> str:
         f"{send_line}\n"
         f"Метка: {perm_label(chat.permission)}\n"
         f"{rule_line}"
-        f"{tpl_line}\n"
+        f"{tpl_line}"
         f"Отправлено/ошибок: {chat.success_count}/{chat.fail_count}"
     )
 
 
-async def _render_detail(message: Message, chat: Chat) -> None:
+async def _render_detail(message: Message, chat: Chat, pool_mode: bool = False) -> None:
     tpl_count = len([t for t in chat.templates if t.is_active])
     filt, page = _ORIGIN.get(message.chat.id, ("allowed", 0))
     await ui.edit_panel(
-        message, _detail_text(chat),
-        chat_detail_kb(chat, tpl_count, back_filt=filt, back_page=page),
+        message, _detail_text(chat, pool_mode),
+        chat_detail_kb(chat, tpl_count, pool_mode, back_filt=filt, back_page=page),
     )
 
 
@@ -194,7 +198,8 @@ async def on_chat_detail(cq: CallbackQuery, sessionmaker) -> None:
         if chat is None:
             await cq.answer("Чат не найден", show_alert=True)
             return
-        await _render_detail(cq.message, chat)
+        pool_mode = (await get_setting(s, POST_MODE, "templates")) == "pool"
+        await _render_detail(cq.message, chat, pool_mode)
     await cq.answer()
 
 
@@ -207,7 +212,8 @@ async def _mutate_and_render(cq: CallbackQuery, sessionmaker, chat_id: int, fn) 
         fn(chat)
         await s.commit()
         await s.refresh(chat)
-        await _render_detail(cq.message, chat)
+        pool_mode = (await get_setting(s, POST_MODE, "templates")) == "pool"
+        await _render_detail(cq.message, chat, pool_mode)
 
 
 def _set_permission(chat: Chat, value: str) -> None:
@@ -356,7 +362,8 @@ async def on_apply_all(cq: CallbackQuery, sessionmaker) -> None:
         n = len(targets)
         src = await _get_chat(s, src_id)
         if src is not None:
-            await _render_detail(cq.message, src)
+            pool_mode = (await get_setting(s, POST_MODE, "templates")) == "pool"
+            await _render_detail(cq.message, src, pool_mode)
     await cq.answer(f"Применено к {n} чатам", show_alert=True)
 
 
@@ -436,7 +443,8 @@ async def on_test_now(cq: CallbackQuery, sessionmaker, telegram, settings) -> No
     async with sessionmaker() as s:
         chat = await _get_chat(s, chat_id)
         if chat is not None:
-            await _render_detail(cq.message, chat)
+            pool_mode = (await get_setting(s, POST_MODE, "templates")) == "pool"
+            await _render_detail(cq.message, chat, pool_mode)
     await cq.answer("✅ Отправлено в этот чат" if ok else f"⚠️ Не ушло: {err}", show_alert=True)
 
 
