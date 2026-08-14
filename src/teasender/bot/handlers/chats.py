@@ -573,6 +573,24 @@ async def on_search_bulk(cq: CallbackQuery, sessionmaker) -> None:
     await cq.answer(f"Обновлено: {n}", show_alert=True)
 
 
+@router.callback_query(F.data.startswith("sendpage:"))
+async def on_send_page(cq: CallbackQuery, sessionmaker) -> None:
+    _, filt, page_s, action = cq.data.split(":")
+    page = int(page_s)
+    on = action == "on"
+    chats, _ = await _load_page(sessionmaker, filt, page)
+    async with sessionmaker() as s:
+        n = 0
+        for c in chats:
+            db_chat = await s.get(Chat, c.id)
+            db_chat.is_enabled = on
+            n += 1
+        await s.commit()
+    await cq.answer(f"{'Включена' if on else 'Выключена'} отправка: {n}", show_alert=True)
+    text, kb = await _list_payload(sessionmaker, filt, page)
+    await ui.edit_panel(cq.message, text, kb)
+
+
 @router.message(F.text.startswith("/rule"))
 async def on_rule(message: Message, sessionmaker) -> None:
     parts = message.text.split()
