@@ -6,6 +6,7 @@ never replies on your behalf.
 from __future__ import annotations
 
 import logging
+import re
 
 from sqlalchemy import select
 
@@ -84,15 +85,22 @@ async def handle_incoming(sessionmaker, notifier, event) -> None:
     low = text.lower()
     chat_tg = event.chat_id
 
-    # Record chat activity (feeds smart broadcasting).
+    # Only monitor chats we broadcast to (in our DB) — not random subscriptions.
     async with sessionmaker() as s:
         chat_row = await s.scalar(select(Chat).where(Chat.tg_chat_id == chat_tg))
-        if chat_row is not None:
-            chat_row.last_activity_at = utcnow()
-            chat_row.activity_msgs = (chat_row.activity_msgs or 0) + 1
-            if chat_row.activity_window_start is None:
-                chat_row.activity_window_start = utcnow()
-            await s.commit()
+        if chat_row is None:
+            return
+        chat_id = chat_row.id
+        muted = chat_row.monitor_muted
+        # Record activity for smart broadcasting.
+        chat_row.last_activity_at = utcnow()
+        chat_row.activity_msgs = (chat_row.activity_msgs or 0) + 1
+        if chat_row.activity_window_start is None:
+            chat_row.activity_window_start = utcnow()
+        await s.commit()
+
+    if muted:
+        return  # excluded from lead monitoring
 
     reasons: list[str] = []
 
@@ -114,7 +122,7 @@ async def handle_incoming(sessionmaker, notifier, event) -> None:
     if _is_real_mention(msg):
         reasons.append("🔔 Упоминание")
 
-    kw_hits = [k for k in _KEYWORDS if k in low]
+    kw_hits = [k for k in _KEYWORDS if re.search(r"\b" + re.escape(k) + r"\b", low)]
     if kw_hits:
         reasons.append("🔎 Ключевое: " + ", ".join(kw_hits))
 
@@ -135,9 +143,10 @@ async def handle_incoming(sessionmaker, notifier, event) -> None:
 
     link = _message_link(chat_tg, username, msg.id)
     snippet = text[:250] if text else "[без текста]"
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🔗 Открыть", url=link),
-    ]])
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔗 Открыть", url=link)],
+        [InlineKeyboardButton(text="🔕 Не чекать этот чат", callback_data=f"mutechat:{chat_id}")],
+    ])
     await notifier.send(
         f"{' · '.join(reasons)}\n"
         f"Чат: {title}\n"

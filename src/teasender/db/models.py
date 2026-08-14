@@ -217,6 +217,8 @@ class Chat(Base):
     rule_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Exempt this chat from smart broadcasting -> use its own per-chat schedule.
     smart_exempt: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Exclude this chat from lead monitoring (keywords/replies/mentions).
+    monitor_muted: Mapped[bool] = mapped_column(Boolean, default=False)
     success_count: Mapped[int] = mapped_column(Integer, default=0)
     fail_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

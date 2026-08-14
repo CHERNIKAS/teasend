@@ -594,6 +594,20 @@ async def on_search_bulk(cq: CallbackQuery, sessionmaker) -> None:
     await cq.answer(f"Обновлено: {n}", show_alert=True)
 
 
+@router.callback_query(F.data.startswith("mutechat:"))
+async def on_mute_chat(cq: CallbackQuery, sessionmaker) -> None:
+    chat_id = int(cq.data.split(":")[1])
+    async with sessionmaker() as s:
+        chat = await s.get(Chat, chat_id)
+        title = chat.title if chat else "чат"
+        if chat is not None:
+            chat.monitor_muted = True
+            await s.commit()
+    with suppress(Exception):
+        await cq.message.edit_reply_markup(reply_markup=None)
+    await cq.answer(f"🔕 «{title}» исключён из мониторинга", show_alert=True)
+
+
 @router.callback_query(F.data.startswith("sendpage:"))
 async def on_send_page(cq: CallbackQuery, sessionmaker) -> None:
     _, filt, page_s, action = cq.data.split(":")
