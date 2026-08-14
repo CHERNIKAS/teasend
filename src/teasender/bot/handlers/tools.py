@@ -148,14 +148,16 @@ def _smart_payload(st: dict):
     return text, kb
 
 
+_CAT_ICON = {"active": "🟢", "quiet": "💤", "own": "⚙️"}
+_PREV_PAGE = 15
+
+
 @router.callback_query(F.data == "smartprev")
 async def on_smart_preview(cq: CallbackQuery, sessionmaker) -> None:
     from teasender.services.planner import analyze_smart
     async with sessionmaker() as s:
         a = await analyze_smart(s)
     bc = a["by_cat"]
-    lines = [f"• {html.escape(t[:30])} — {e:.1f}/д" for t, e in a["top"] if e > 0]
-    top_txt = ("\n\n<b>Больше всего постов:</b>\n" + "\n".join(lines)) if lines else ""
     warm = f"\n\n⚠️ Без данных активности (нужен прогрев): <b>{a['warmup']}</b> чатов — им пока только пробники." if a["warmup"] else ""
     text = (
         "🔮 <b>Предпросмотр умной рассылки</b>\n"
@@ -164,13 +166,42 @@ async def on_smart_preview(cq: CallbackQuery, sessionmaker) -> None:
         f"🟢 активные (по доле): {bc['active']}\n"
         f"💤 тихие/мёртвые (пробник): {bc['quiet']}\n"
         f"⚙️ свои настройки: {bc['own']}"
-        f"{top_txt}{warm}"
+        f"{warm}"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"📋 Список всех чатов ({a['chats']})", callback_data="smartlist:0")],
         [InlineKeyboardButton(text="🔄 Пересчитать", callback_data="smartprev")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="smart")],
     ])
     await ui.edit_panel(cq.message, text, kb)
+    await cq.answer()
+
+
+@router.callback_query(F.data.startswith("smartlist:"))
+async def on_smart_list(cq: CallbackQuery, sessionmaker) -> None:
+    from teasender.services.planner import analyze_smart
+    page = int(cq.data.split(":")[1])
+    async with sessionmaker() as s:
+        a = await analyze_smart(s)
+    rows = a["rows"]
+    total = len(rows)
+    chunk = rows[page * _PREV_PAGE:(page + 1) * _PREV_PAGE]
+    lines = [
+        f"{_CAT_ICON.get(cat, '•')} {html.escape(title[:32])} — {exp:.1f}/д"
+        for title, exp, cat in chunk
+    ] or ["— пусто —"]
+    text = (
+        f"📋 <b>Все чаты в рассылке</b> ({total}) · ~{a['total_per_day']:.0f} постов/день\n"
+        f"<i>🟢 активный · 💤 пробник · ⚙️ свои настройки</i>\n\n"
+        + "\n".join(lines)
+    )
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀️", callback_data=f"smartlist:{page-1}"))
+    if (page + 1) * _PREV_PAGE < total:
+        nav.append(InlineKeyboardButton(text="▶️", callback_data=f"smartlist:{page+1}"))
+    kb_rows = ([nav] if nav else []) + [[InlineKeyboardButton(text="⬅️ Назад", callback_data="smartprev")]]
+    await ui.edit_panel(cq.message, text, InlineKeyboardMarkup(inline_keyboard=kb_rows))
     await cq.answer()
 
 

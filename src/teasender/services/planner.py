@@ -309,11 +309,11 @@ async def analyze_smart(session: AsyncSession) -> dict:
     by_cat = {"active": 0, "quiet": 0, "own": 0}
     for _, _, c in rows:
         by_cat[c] += 1
-    top = sorted(rows, key=lambda r: r[1], reverse=True)[:8]
+    rows.sort(key=lambda r: r[1], reverse=True)
     warmup = sum(1 for c in chats if c.last_activity_at is None and not c.smart_exempt)
     return {
         "chats": len(chats), "total_per_day": total, "by_cat": by_cat,
-        "top": [(t, e) for t, e, _ in top], "warmup": warmup,
+        "rows": rows, "warmup": warmup,
     }
 
 
