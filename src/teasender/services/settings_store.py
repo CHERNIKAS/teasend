@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from teasender.db.models import Setting
 
+SEND_AFTER = "send_after"  # ISO datetime (UTC): hold all sending until then
 POST_MODE = "post_mode"   # "templates" | "pool"
 CAPTION = "caption"       # caption text for pool mode
 SOURCE = "drafts_channel"  # source / pool channel override

@@ -1,12 +1,12 @@
 """Start menu, status, account pause/resume, and drafts/chats sync."""
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import func, select
 
 from teasender.bot import ui
@@ -45,11 +45,13 @@ from teasender.services.settings_store import (
     JOIN_CAP,
     KEYWORDS,
     POST_MODE,
+    SEND_AFTER,
     SMART_CAP,
     SMART_MODE,
     SMART_SHARE,
     SMART_WINDOW,
     get_setting,
+    set_setting,
 )
 
 router = Router(name="menu")
@@ -126,6 +128,7 @@ async def _build_status(sessionmaker, settings: Settings) -> str:
         smart_share = await get_setting(s, SMART_SHARE, "7")
         smart_cap = await get_setting(s, SMART_CAP, "2")
         smart_win = await get_setting(s, SMART_WINDOW, "9-22")
+        start_iso = await get_setting(s, SEND_AFTER, "") or ""
 
     state = acc.state if acc else None
     state_txt = {
@@ -159,9 +162,18 @@ async def _build_status(sessionmaker, settings: Settings) -> str:
     )
     kw_txt = f"{kw_n} слов" if kw_n else "выкл"
 
+    start_line = ""
+    if start_iso:
+        try:
+            sa = datetime.fromisoformat(start_iso)
+            if sa > utcnow():
+                start_line = f"\n⏰ <b>Старт отложен до {sa.astimezone(tz).strftime('%d.%m %H:%M')}</b>"
+        except ValueError:
+            pass
+
     return (
         f"📊 <b>Статус</b>\n"
-        f"Режим: {mode} · Аккаунт: {state_txt}\n"
+        f"Режим: {mode} · Аккаунт: {state_txt}{start_line}\n"
         f"\n"
         f"💬 <b>Чаты:</b> всего {enabled_chats}\n"
         f"📤 Рассылка вкл: <b>{eligible_chats}</b> · ✅ {allowed_n} · ⛔ {denied_n} · ❔ {unknown_n}\n"
@@ -193,6 +205,51 @@ async def on_status_cb(cq: CallbackQuery, sessionmaker, settings: Settings) -> N
     text = await _build_status(sessionmaker, settings)
     await ui.edit_panel(cq.message, text, status_kb())
     await cq.answer("Обновлено")
+
+
+@router.callback_query(F.data == "startat")
+async def on_startat(cq: CallbackQuery) -> None:
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🌅 Завтра 09:00", callback_data="startset:tom9")],
+        [InlineKeyboardButton(text="🌅 Завтра 11:00", callback_data="startset:tom11")],
+        [
+            InlineKeyboardButton(text="⏱ +6 ч", callback_data="startset:h6"),
+            InlineKeyboardButton(text="⏱ +12 ч", callback_data="startset:h12"),
+        ],
+        [InlineKeyboardButton(text="▶️ Сейчас (сброс)", callback_data="startset:now")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="status")],
+    ])
+    await ui.edit_panel(
+        cq.message,
+        "⏰ <b>Отложить старт рассылки</b>\n"
+        "До выбранного времени бот ничего не отправляет (планирование идёт, но посты ждут).",
+        kb,
+    )
+    await cq.answer()
+
+
+@router.callback_query(F.data.startswith("startset:"))
+async def on_startset(cq: CallbackQuery, sessionmaker, settings: Settings) -> None:
+    opt = cq.data.split(":")[1]
+    tz = ZoneInfo(settings.timezone)
+    now_local = utcnow().astimezone(tz)
+    value = ""
+    if opt == "now":
+        value = ""
+    elif opt in ("tom9", "tom11"):
+        hour = 9 if opt == "tom9" else 11
+        d = now_local.date() + timedelta(days=1)
+        value = datetime.combine(d, time(hour, 0), tzinfo=tz).astimezone(timezone.utc).isoformat()
+    elif opt == "h6":
+        value = (utcnow() + timedelta(hours=6)).isoformat()
+    elif opt == "h12":
+        value = (utcnow() + timedelta(hours=12)).isoformat()
+    async with sessionmaker() as s:
+        await set_setting(s, SEND_AFTER, value)
+        await s.commit()
+    text = await _build_status(sessionmaker, settings)
+    await ui.edit_panel(cq.message, text, status_kb())
+    await cq.answer("Старт сброшен — шлём по расписанию" if not value else "Старт отложен")
 
 
 @router.message(F.text == BTN_CHATS)

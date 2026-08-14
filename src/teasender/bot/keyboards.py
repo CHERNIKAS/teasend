@@ -37,9 +37,10 @@ def main_menu_reply() -> ReplyKeyboardMarkup:
 # --- Status -------------------------------------------------------------------
 
 def status_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="🔄 Обновить", callback_data="status")]]
-    )
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🔄 Обновить", callback_data="status"),
+        InlineKeyboardButton(text="⏰ Старт", callback_data="startat"),
+    ]])
 
 
 def back_button(cb: str = "status") -> InlineKeyboardMarkup:

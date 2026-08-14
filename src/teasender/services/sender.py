@@ -19,7 +19,13 @@ from teasender.config import Settings
 from teasender.core.enums import AccountState, Permission, PublicationStatus
 from teasender.db.models import Account, Chat, Publication, Template, as_utc, utcnow
 from teasender.services.notify import Notifier
-from teasender.services.settings_store import CAPTION, SOURCE, as_channel, get_setting
+from teasender.services.settings_store import (
+    CAPTION,
+    SEND_AFTER,
+    SOURCE,
+    as_channel,
+    get_setting,
+)
 from teasender.services.spintax import spin
 
 log = logging.getLogger("teasender.sender")
@@ -79,6 +85,17 @@ class Sender:
     async def run_due_once(self) -> None:
         """Send every publication that is due now, one at a time."""
         await self._cancel_stale()
+        # Scheduled start: hold all sending until the configured time.
+        async with self._sm() as s:
+            start_iso = await get_setting(s, SEND_AFTER, "")
+        if start_iso:
+            try:
+                start_at = datetime.fromisoformat(start_iso)
+                if utcnow() < start_at:
+                    log.info("sender idle: waiting for scheduled start %s", start_iso)
+                    return
+            except ValueError:
+                pass
         if not await self._account_ready():
             async with self._sm() as s:
                 acc = await s.scalar(select(Account).limit(1))
