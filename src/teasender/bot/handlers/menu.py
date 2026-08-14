@@ -10,7 +10,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy import func, select
 
 from teasender.bot import ui
-from teasender.bot.awaiting import clear_await
+from teasender.bot.awaiting import clear_await, set_await
 from teasender.bot.handlers.chats import render_chats_message
 from teasender.bot.handlers.templates import render_templates_message
 from teasender.bot.handlers.stats import render_stats_message
@@ -26,7 +26,7 @@ from teasender.bot.keyboards import (
     main_menu_reply,
     status_kb,
 )
-from teasender.config import Settings
+from teasender.config import Settings, get_settings
 from teasender.core.enums import AccountState, Permission, PublicationStatus
 from teasender.db.models import (
     Account,
@@ -208,48 +208,96 @@ async def on_status_cb(cq: CallbackQuery, sessionmaker, settings: Settings) -> N
 
 
 @router.callback_query(F.data == "startat")
-async def on_startat(cq: CallbackQuery) -> None:
+async def on_startat(cq: CallbackQuery, sessionmaker, settings: Settings) -> None:
+    async with sessionmaker() as s:
+        cur = await get_setting(s, SEND_AFTER, "") or ""
+    cur_line = ""
+    try:
+        if cur and datetime.fromisoformat(cur) > utcnow():
+            when = datetime.fromisoformat(cur).astimezone(ZoneInfo(settings.timezone))
+            cur_line = f"\nСейчас отложено до: <b>{when.strftime('%d.%m %H:%M')}</b>"
+    except ValueError:
+        pass
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🌅 Завтра 09:00", callback_data="startset:tom9")],
-        [InlineKeyboardButton(text="🌅 Завтра 11:00", callback_data="startset:tom11")],
-        [
-            InlineKeyboardButton(text="⏱ +6 ч", callback_data="startset:h6"),
-            InlineKeyboardButton(text="⏱ +12 ч", callback_data="startset:h12"),
-        ],
+        [InlineKeyboardButton(text="✍️ Указать дату и время", callback_data="startcustom")],
         [InlineKeyboardButton(text="▶️ Сейчас (сброс)", callback_data="startset:now")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="status")],
     ])
     await ui.edit_panel(
         cq.message,
         "⏰ <b>Отложить старт рассылки</b>\n"
-        "До выбранного времени бот ничего не отправляет (планирование идёт, но посты ждут).",
+        "До указанного времени бот ничего не отправляет (планирование идёт, посты ждут)."
+        f"{cur_line}",
         kb,
     )
     await cq.answer()
 
 
-@router.callback_query(F.data.startswith("startset:"))
-async def on_startset(cq: CallbackQuery, sessionmaker, settings: Settings) -> None:
-    opt = cq.data.split(":")[1]
-    tz = ZoneInfo(settings.timezone)
-    now_local = utcnow().astimezone(tz)
-    value = ""
-    if opt == "now":
-        value = ""
-    elif opt in ("tom9", "tom11"):
-        hour = 9 if opt == "tom9" else 11
-        d = now_local.date() + timedelta(days=1)
-        value = datetime.combine(d, time(hour, 0), tzinfo=tz).astimezone(timezone.utc).isoformat()
-    elif opt == "h6":
-        value = (utcnow() + timedelta(hours=6)).isoformat()
-    elif opt == "h12":
-        value = (utcnow() + timedelta(hours=12)).isoformat()
+@router.callback_query(F.data == "startcustom")
+async def on_start_custom(cq: CallbackQuery) -> None:
+    set_await(cq.message.chat.id, "startat")
+    await cq.message.answer(
+        "⏰ Пришли дату и время <b>следующим сообщением</b>, например:\n"
+        "<code>15.08 09:00</code>  ·  <code>09:00</code> (ближайшее)  ·  <code>20.08.2026 14:30</code>\n"
+        "<i>Отмена — нажми любой пункт меню.</i>",
+        parse_mode="HTML",
+    )
+    await cq.answer()
+
+
+@router.callback_query(F.data == "startset:now")
+async def on_start_reset(cq: CallbackQuery, sessionmaker, settings: Settings) -> None:
     async with sessionmaker() as s:
-        await set_setting(s, SEND_AFTER, value)
+        await set_setting(s, SEND_AFTER, "")
         await s.commit()
     text = await _build_status(sessionmaker, settings)
     await ui.edit_panel(cq.message, text, status_kb())
-    await cq.answer("Старт сброшен — шлём по расписанию" if not value else "Старт отложен")
+    await cq.answer("Отложка снята — шлём по расписанию")
+
+
+def _parse_when(text: str, tz: ZoneInfo) -> datetime | None:
+    """Parse 'DD.MM HH:MM' / 'DD.MM.YYYY HH:MM' / 'HH:MM' into a UTC datetime."""
+    t = text.strip()
+    now_local = utcnow().astimezone(tz)
+    for fmt in ("%d.%m.%Y %H:%M", "%d.%m %H:%M", "%H:%M"):
+        try:
+            p = datetime.strptime(t, fmt)
+        except ValueError:
+            continue
+        if fmt == "%H:%M":
+            local = now_local.replace(hour=p.hour, minute=p.minute, second=0, microsecond=0)
+            if local <= now_local:
+                local += timedelta(days=1)
+        elif fmt == "%d.%m %H:%M":
+            local = datetime(now_local.year, p.month, p.day, p.hour, p.minute, tzinfo=tz)
+            if local < now_local:
+                local = local.replace(year=now_local.year + 1)
+        else:
+            local = datetime(p.year, p.month, p.day, p.hour, p.minute, tzinfo=tz)
+        return local.astimezone(timezone.utc)
+    return None
+
+
+# Called by tools.on_text_input when awaiting a scheduled-start time.
+async def save_start_input(message: Message, sessionmaker, text: str) -> None:
+    settings = get_settings()
+    tz = ZoneInfo(settings.timezone)
+    when = _parse_when(text, tz)
+    if when is None:
+        await message.answer(
+            "❌ Не понял дату/время. Формат: <code>15.08 09:00</code> или <code>09:00</code>.",
+            parse_mode="HTML", reply_markup=main_menu_reply(),
+        )
+        return
+    async with sessionmaker() as s:
+        await set_setting(s, SEND_AFTER, when.isoformat())
+        await s.commit()
+    local = when.astimezone(tz)
+    await message.answer(
+        f"✅ Старт рассылки отложен до <b>{local.strftime('%d.%m.%Y %H:%M')}</b>. "
+        "До этого времени ничего не отправляется.",
+        parse_mode="HTML", reply_markup=main_menu_reply(),
+    )
 
 
 @router.message(F.text == BTN_CHATS)

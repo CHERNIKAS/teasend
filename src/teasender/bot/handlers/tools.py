@@ -344,6 +344,9 @@ async def on_text_input(message: Message, sessionmaker) -> None:
     elif kind == "caption":
         from teasender.bot.handlers.templates import save_caption_input
         await save_caption_input(message, sessionmaker, text)
+    elif kind == "startat":
+        from teasender.bot.handlers.menu import save_start_input
+        await save_start_input(message, sessionmaker, text)
 
 
 @router.message(Command("keywords"))
