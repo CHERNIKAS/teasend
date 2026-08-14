@@ -76,6 +76,10 @@ async def handle_incoming(sessionmaker, notifier, event) -> None:
     msg = event.message
     if msg is None or getattr(msg, "out", False):
         return  # our own message
+    # Only watch groups/channels we broadcast to — never private chats (incl. the
+    # chat with our own control bot, which would loop on our own notifications).
+    if getattr(event, "is_private", False):
+        return
     text = msg.raw_text or ""
     low = text.lower()
     chat_tg = event.chat_id
