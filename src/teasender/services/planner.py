@@ -266,6 +266,57 @@ async def plan_day(session: AsyncSession, tz_name: str, now: datetime | None = N
     return planned_total
 
 
+async def analyze_smart(session: AsyncSession) -> dict:
+    """Simulate smart broadcasting: expected posts/day per enabled chat, without
+    scheduling anything. Used for the pre-start preview."""
+    share = float(await _smart_setting(session, SMART_SHARE)) / 100.0
+    cap = float(await _smart_setting(session, SMART_CAP))
+    dead_days = float(await _smart_setting(session, SMART_DEAD_DAYS))
+    probe_days = float(await _smart_setting(session, SMART_PROBE_DAYS))
+    probe_per_day = 1.0 / probe_days if probe_days > 0 else 0.0
+
+    now_utc = datetime.now(timezone.utc)
+    chats = list((await session.scalars(select(Chat).where(Chat.is_enabled.is_(True)))).all())
+
+    rows: list[tuple[str, float, str]] = []
+    for chat in chats:
+        if chat.smart_exempt:
+            exp = float(chat.posts_per_day)
+            if chat.rule_min_interval_h:
+                exp = min(exp, 24.0 / chat.rule_min_interval_h)
+            rows.append((chat.title, exp, "own"))
+            continue
+        last_act = as_utc(chat.last_activity_at)
+        if chat.activity_window_start and chat.activity_msgs:
+            days = max(0.5, (now_utc - as_utc(chat.activity_window_start)).total_seconds() / 86400)
+            rate = chat.activity_msgs / days
+        else:
+            rate = 0.0
+        no_data = last_act is None
+        dead = no_data or (now_utc - last_act) >= timedelta(days=dead_days)
+        if dead:
+            rows.append((chat.title, probe_per_day, "quiet"))
+            continue
+        exp = min(cap, share * rate)
+        if chat.rule_min_interval_h:
+            exp = min(exp, 24.0 / chat.rule_min_interval_h)
+        if exp <= 0:
+            rows.append((chat.title, probe_per_day, "quiet"))
+        else:
+            rows.append((chat.title, exp, "active"))
+
+    total = sum(e for _, e, _ in rows)
+    by_cat = {"active": 0, "quiet": 0, "own": 0}
+    for _, _, c in rows:
+        by_cat[c] += 1
+    top = sorted(rows, key=lambda r: r[1], reverse=True)[:8]
+    warmup = sum(1 for c in chats if c.last_activity_at is None and not c.smart_exempt)
+    return {
+        "chats": len(chats), "total_per_day": total, "by_cat": by_cat,
+        "top": [(t, e) for t, e, _ in top], "warmup": warmup,
+    }
+
+
 def _parse_window(raw: str) -> tuple[time, time]:
     try:
         a, b = raw.split("-")

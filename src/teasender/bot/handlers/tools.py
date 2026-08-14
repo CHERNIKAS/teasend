@@ -142,9 +142,36 @@ def _smart_payload(st: dict):
             InlineKeyboardButton(text=f"Стоп: {win_b:02d}:00", callback_data="noop"),
             InlineKeyboardButton(text="➕", callback_data="sm:wine:1"),
         ],
+        [InlineKeyboardButton(text="🔮 Предпросмотр рассылки", callback_data="smartprev")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="tools")],
     ])
     return text, kb
+
+
+@router.callback_query(F.data == "smartprev")
+async def on_smart_preview(cq: CallbackQuery, sessionmaker) -> None:
+    from teasender.services.planner import analyze_smart
+    async with sessionmaker() as s:
+        a = await analyze_smart(s)
+    bc = a["by_cat"]
+    lines = [f"• {html.escape(t[:30])} — {e:.1f}/д" for t, e in a["top"] if e > 0]
+    top_txt = ("\n\n<b>Больше всего постов:</b>\n" + "\n".join(lines)) if lines else ""
+    warm = f"\n\n⚠️ Без данных активности (нужен прогрев): <b>{a['warmup']}</b> чатов — им пока только пробники." if a["warmup"] else ""
+    text = (
+        "🔮 <b>Предпросмотр умной рассылки</b>\n"
+        f"Чатов в работе: <b>{a['chats']}</b>\n"
+        f"Ожидаемо постов/день всего: <b>{a['total_per_day']:.0f}</b>\n\n"
+        f"🟢 активные (по доле): {bc['active']}\n"
+        f"💤 тихие/мёртвые (пробник): {bc['quiet']}\n"
+        f"⚙️ свои настройки: {bc['own']}"
+        f"{top_txt}{warm}"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Пересчитать", callback_data="smartprev")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="smart")],
+    ])
+    await ui.edit_panel(cq.message, text, kb)
+    await cq.answer()
 
 
 @router.callback_query(F.data == "tools")
