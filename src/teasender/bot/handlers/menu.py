@@ -139,12 +139,26 @@ async def _build_status(sessionmaker, settings: Settings) -> str:
     mode = "🔴 БОЕВОЙ" if not settings.dry_run else "🧪 DRY-RUN (без отправки)"
 
     tz = ZoneInfo(settings.timezone)
-    if next_dt is None:
+    # Deferred start holds everything until then — reflect it in "ближайшая".
+    hold_until = None
+    if start_iso:
+        try:
+            _sa = datetime.fromisoformat(start_iso)
+            if _sa > utcnow():
+                hold_until = _sa
+        except ValueError:
+            pass
+
+    eff = as_utc(next_dt) if next_dt is not None else None
+    if hold_until is not None and (eff is None or eff < hold_until):
+        eff = hold_until
+    if eff is None:
         next_txt = "—"
-    elif as_utc(next_dt) <= utcnow():
+    elif hold_until is None and eff <= utcnow():
         next_txt = "сейчас"
     else:
-        next_txt = as_utc(next_dt).astimezone(tz).strftime("%d.%m %H:%M")
+        prefix = "⏰ по старту " if hold_until is not None and eff == hold_until else ""
+        next_txt = prefix + eff.astimezone(tz).strftime("%d.%m %H:%M")
 
     warn = ""
     if eligible_chats == 0:
