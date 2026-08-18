@@ -163,6 +163,9 @@ def _detail_text(chat: Chat, pool_mode: bool) -> str:
             tpl_line = "Шаблоны: по умолчанию (первый активный)"
         tpl_line += "\n"
     send_line = "📤 Отправка: ВКЛ" if chat.is_enabled else "📵 Отправка: выкл"
+    access_line = ""
+    if chat.permission_note in ("не участник", "забанен", "нет отправки"):
+        access_line = f"📛 Доступ: {chat.permission_note}\n"
     rule_line = ""
     if chat.rule_note and chat.rule_note != "нет правил":
         rule_line = f"📜 Правило: {html.escape(chat.rule_note)}\n"
@@ -171,6 +174,7 @@ def _detail_text(chat: Chat, pool_mode: bool) -> str:
         f"ID: <code>{chat.tg_chat_id}</code>\n"
         f"{send_line}\n"
         f"Метка: {perm_label(chat.permission)}\n"
+        f"{access_line}"
         f"{rule_line}"
         f"{tpl_line}"
         f"Отправлено/ошибок: {chat.success_count}/{chat.fail_count}"

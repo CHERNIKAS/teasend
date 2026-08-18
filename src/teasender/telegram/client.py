@@ -115,6 +115,27 @@ class TelegramService:
         group = [m for m in msgs if m is not None and m.grouped_id == grouped_id]
         return entity, group or [await self._client.get_messages(entity, ids=message_id)]
 
+    async def check_access(self, tg_id: int) -> str:
+        """Check our standing in a chat: 'ok' | 'не участник' | 'забанен' |
+        'нет отправки' | '?'. Uses our own participant permissions."""
+        from telethon.errors import UserNotParticipantError
+
+        try:
+            ent = await self._input_entity(tg_id)
+        except Exception:  # noqa: BLE001 - can't resolve => likely removed
+            return "не участник"
+        try:
+            perms = await self._client.get_permissions(ent, "me")
+        except UserNotParticipantError:
+            return "не участник"
+        except Exception:  # noqa: BLE001
+            return "?"
+        if getattr(perms, "is_banned", False):
+            return "забанен"
+        if getattr(perms, "send_messages", True) is False:
+            return "нет отправки"
+        return "ok"
+
     async def read_chat_rules(self, tg_id: int) -> str:
         """Return the chat's description (About) + pinned message text, for rule
         parsing. Empty string if unavailable."""
